@@ -1,10 +1,10 @@
 #include "excellib/xlsx_parser.hpp"
+#include "../common/deflate.hpp"
 #include <cstring>
 #include <algorithm>
 #include <sstream>
 #include <fstream>
 #include <stdexcept>
-#include <zlib.h>
 
 namespace excellib::xlsx {
 
@@ -57,20 +57,7 @@ static uint16_t rd16(const uint8_t* p) {
 }
 
 std::vector<uint8_t> ZipReader::inflate(const uint8_t* comp, size_t comp_sz, size_t uncomp_sz) {
-    std::vector<uint8_t> out(uncomp_sz);
-    z_stream zs{};
-    zs.next_in   = const_cast<Bytef*>(comp);
-    zs.avail_in  = static_cast<uInt>(comp_sz);
-    zs.next_out  = out.data();
-    zs.avail_out = static_cast<uInt>(uncomp_sz);
-    if (inflateInit2(&zs, -MAX_WBITS) != Z_OK)
-        throw ParseError("zlib inflateInit2 failed");
-    int ret = ::inflate(&zs, Z_FINISH);
-    inflateEnd(&zs);
-    if (ret != Z_STREAM_END && ret != Z_OK)
-        throw ParseError("zlib inflate failed: ret=" + std::to_string(ret));
-    out.resize(zs.total_out);
-    return out;
+    return excellib::detail::deflate_decompress(comp, comp_sz, uncomp_sz);
 }
 
 void ZipReader::parse(const std::vector<uint8_t>& data) {
