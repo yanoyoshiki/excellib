@@ -15,16 +15,12 @@ else()
 endif()
 
 # ============================================================
-#  依存ライブラリ
-# ============================================================
-find_package(ZLIB REQUIRED)
-
-# ============================================================
-#  ライブラリ本体
+#  ライブラリ本体 (外部依存なし)
 # ============================================================
 add_library(excellib STATIC
     src/common/common.cpp
     src/common/factory.cpp
+    src/common/deflate.cpp
     src/xls/xls_parser.cpp
     src/xlsx/xlsx_parser.cpp
     src/print/xlsx_page_setup.cpp
@@ -37,8 +33,6 @@ target_include_directories(excellib
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
-
-target_link_libraries(excellib PUBLIC ZLIB::ZLIB)
 
 # Windows: Excel COM に必要なライブラリ
 if(WIN32)
@@ -84,4 +78,4 @@ message(STATUS "excellib v${PROJECT_VERSION}")
 message(STATUS "  Build type : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ std    : C++${CMAKE_CXX_STANDARD}")
 message(STATUS "  Compiler   : ${CMAKE_CXX_COMPILER_ID}")
-message(STATUS "  ZLIB       : ${ZLIB_VERSION_STRING}")
+message(STATUS "  外部依存   : なし (DEFLATE/CRC32は内部実装)")
