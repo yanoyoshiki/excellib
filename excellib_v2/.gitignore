@@ -1,0 +1,76 @@
+# ============================================================
+#  excellib .gitignore
+# ============================================================
+
+# ---- ビルド成果物 ----
+build/
+build-*/
+cmake-build-*/
+out/
+_build/
+
+# ただし build/.gitkeep は追跡する
+!build/.gitkeep
+
+# ---- コンパイル生成物 ----
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.lib
+*.exe
+*.out
+*.obj
+
+# ---- CMake 生成ファイル ----
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+_deps/
+
+# ---- IDE / エディタ ----
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.vcxproj.user
+
+# ---- テスト実行時の一時ファイル ----
+/tmp/
+*.tmp
+*.log
+
+# ---- サンプル出力ファイル（examples/ 実行で生成） ----
+examples/*.xlsx
+examples/*.pdf
+*.xlsx
+*.pdf
+*.xps
+
+# ---- Visual Studio ----
+.vs/
+x64/
+x86/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+
+# ---- Ninja ----
+.ninja_deps
+.ninja_log
+
+# ---- Windows VBScript 一時ファイル ----
+*.vbs

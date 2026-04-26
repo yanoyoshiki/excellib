@@ -1,0 +1,47 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+
+# インデント
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+
+# 列幅
+ColumnLimit: 100
+
+# ブレース
+BreakBeforeBraces: Attach
+
+# スペース
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# ポインタ・参照の位置
+PointerAlignment: Left
+
+# コメント
+ReflowComments: false
+
+# include の整列
+SortIncludes: true
+IncludeBlocks: Preserve
+
+# 関数引数
+AllowAllArgumentsOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
+
+# namespace
+NamespaceIndentation: None
+CompactNamespaces: false
+
+# その他
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlwaysBreakTemplateDeclarations: Yes
+Standard: c++17

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        include:
+          - os: ubuntu-24.04
+            cxx: g++
+          - os: windows-latest
+            cxx: cl
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Linux ----
+      - name: Install zlib (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p build
+          g++ -std=c++17 -Wall -Wextra -Wno-trigraphs -Iinclude \
+            src/common/common.cpp \
+            src/common/factory.cpp \
+            src/xls/xls_parser.cpp \
+            src/xlsx/xlsx_parser.cpp \
+            src/print/xlsx_page_setup.cpp \
+            src/print/excel_printer.cpp \
+            src/print/batch_printer.cpp \
+            tests/test_all.cpp \
+            -lz -o build/test_all
+
+      - name: Test (Linux)
+        if: runner.os == 'Linux'
+        run: ./build/test_all
+
+      # ---- Windows ----
+      - name: Setup MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --target test_all
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: ./build/Release/test_all.exe
+
+  # ---- サンプルコードのビルド確認 ----
+  build-examples:
+    name: Build Examples (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+      - name: Build examples
+        run: |
+          SRCS="src/common/common.cpp src/common/factory.cpp src/xls/xls_parser.cpp \
+                src/xlsx/xlsx_parser.cpp src/print/xlsx_page_setup.cpp \
+                src/print/excel_printer.cpp src/print/batch_printer.cpp"
+          mkdir -p build
+          for ex in 01_read 02_write 03_print 04_batch_print 05_error_handling; do
+            g++ -std=c++17 -Wno-trigraphs -Iinclude $SRCS examples/${ex}.cpp -lz -o build/${ex}
+            echo "Built: ${ex}"
+          done
