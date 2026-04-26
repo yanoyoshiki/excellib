@@ -573,7 +573,7 @@ static std::vector<uint8_t> build_zip(std::vector<ZFile>& files) {
     std::vector<uint8_t> out;
     for (auto& f : files) {
         f.off = uint32_t(out.size());
-        f.crc = uint32_t(crc32(0L, f.data.data(), uInt(f.data.size())));
+        f.crc = excellib::detail::crc32_compute(f.data.data(), f.data.size());
         ap32(out,0x04034B50); ap16(out,20); ap16(out,0); ap16(out,0);
         ap16(out,0); ap16(out,0);
         ap32(out,f.crc); ap32(out,uint32_t(f.data.size())); ap32(out,uint32_t(f.data.size()));
