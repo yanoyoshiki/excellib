@@ -850,6 +850,128 @@ void test_new_features() {
 }
 
 // ============================================================
+//  SECTION: Japanese / Unicode support
+// ============================================================
+void test_japanese() {
+    group("Japanese / Unicode");
+
+    // ひらがな・カタカナ・漢字・全角記号の混在文字列が XLSX で正確に保持されるか
+    RUN("kanji/kana/fullwidth roundtrip", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("シート1");
+        sh.set_cell("A1", std::string{"日本語テスト"});
+        sh.set_cell("A2", std::string{"ひらがな"});
+        sh.set_cell("A3", std::string{"カタカナ"});
+        sh.set_cell("A4", std::string{"漢字変換"});
+        sh.set_cell("A5", std::string{"全角１２３"});
+        sh.set_cell("A6", std::string{"記号：「」『』・～"});
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes, {});
+        auto& sh2 = wb2->sheet(0);
+        EXPECT_EQ(get_string(sh2.cell("A1").value), std::string{"日本語テスト"});
+        EXPECT_EQ(get_string(sh2.cell("A2").value), std::string{"ひらがな"});
+        EXPECT_EQ(get_string(sh2.cell("A3").value), std::string{"カタカナ"});
+        EXPECT_EQ(get_string(sh2.cell("A4").value), std::string{"漢字変換"});
+        EXPECT_EQ(get_string(sh2.cell("A5").value), std::string{"全角１２３"});
+        EXPECT_EQ(get_string(sh2.cell("A6").value), std::string{"記号：「」『』・～"});
+    });
+
+    // 複数シートを日本語名で作成し、名前で参照できるか
+    RUN("multiple Japanese sheet names", {
+        auto wb = WorkbookFactory::create();
+        wb->add_sheet("東京支社");
+        wb->add_sheet("大阪支社");
+        wb->add_sheet("名古屋支社");
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes, {});
+        EXPECT_EQ(wb2->sheet(0).name(), std::string{"東京支社"});
+        EXPECT_EQ(wb2->sheet(1).name(), std::string{"大阪支社"});
+        EXPECT_EQ(wb2->sheet(2).name(), std::string{"名古屋支社"});
+        // 名前で取得できるか
+        EXPECT_EQ(wb2->sheet("大阪支社").name(), std::string{"大阪支社"});
+    });
+
+    // 日英混在の文字列が化けないか
+    RUN("mixed Japanese and ASCII", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", std::string{"Sales レポート 2024"});
+        sh.set_cell("A2", std::string{"製品A: WidgetX (在庫100個)"});
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes, {});
+        EXPECT_EQ(get_string(wb2->sheet(0).cell("A1").value), std::string{"Sales レポート 2024"});
+        EXPECT_EQ(get_string(wb2->sheet(0).cell("A2").value), std::string{"製品A: WidgetX (在庫100個)"});
+    });
+
+    // 長い日本語文字列（Excel のセル最大長に近い）
+    RUN("long Japanese string", {
+        std::string long_str;
+        for (int i = 0; i < 100; ++i) long_str += "あいうえお";  // 500文字
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", long_str);
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes, {});
+        EXPECT_EQ(get_string(wb2->sheet(0).cell("A1").value), long_str);
+    });
+
+    // set_table で日本語テーブルが正確に保持されるか
+    RUN("Japanese set_table roundtrip", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("売上");
+        sh.set_table("A1", {
+            {std::string{"製品名"}, std::string{"単価"}, std::string{"数量"}},
+            {std::string{"りんご"}, int64_t{150},        int64_t{100}},
+            {std::string{"みかん"}, int64_t{80},         int64_t{200}},
+        });
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes, {});
+        auto& sh2 = wb2->sheet(0);
+        EXPECT_EQ(get_string(sh2.cell("A1").value), std::string{"製品名"});
+        EXPECT_EQ(get_string(sh2.cell("A2").value), std::string{"りんご"});
+        EXPECT_EQ(get_string(sh2.cell("A3").value), std::string{"みかん"});
+    });
+
+    // 日本語シート名でファイルに保存・再読み込みできるか
+    RUN("Japanese sheet name save/reload", {
+        auto path = tmp("japanese_test.xlsx");
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("月次レポート");
+        sh.set_cell("A1", std::string{"テスト"});
+        wb->save(path);
+        auto wb2 = WorkbookFactory::open(path);
+        EXPECT_EQ(wb2->sheet(0).name(), std::string{"月次レポート"});
+        EXPECT_EQ(get_string(wb2->sheet(0).cell("A1").value), std::string{"テスト"});
+    });
+
+    // 重複する日本語シート名でエラーになるか
+    RUN("duplicate Japanese sheet name throws", {
+        auto wb = WorkbookFactory::create();
+        wb->add_sheet("売上");
+        EXPECT_THROWS(wb->add_sheet("売上"), WriteError);
+    });
+
+    // 日本語文字列の for_each_cell で文字化けしないか
+    RUN("Japanese for_each_cell", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", std::string{"東京"});
+        sh.set_cell("A2", std::string{"大阪"});
+        sh.set_cell("A3", std::string{"福岡"});
+        std::vector<std::string> vals;
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes, {});
+        wb2->sheet(0).for_each_cell([&](const Cell& c) {
+            if (is_string(c.value)) vals.push_back(get_string(c.value));
+        });
+        EXPECT_EQ(vals.size(), size_t(3));
+        EXPECT_EQ(vals[0], std::string{"東京"});
+        EXPECT_EQ(vals[1], std::string{"大阪"});
+        EXPECT_EQ(vals[2], std::string{"福岡"});
+    });
+}
+
+// ============================================================
 //  Main
 // ============================================================
 int main() {
@@ -872,6 +994,7 @@ int main() {
     test_batch_printer();
     test_deflate();
     test_new_features();
+    test_japanese();
 
     std::cout<<"\n==========================================\n";
     std::cout<<"  Results: "<<g_pass<<" passed  "<<g_fail<<" failed  "<<g_skip<<" skipped\n";
