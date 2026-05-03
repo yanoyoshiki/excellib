@@ -9,6 +9,12 @@
 #include <fstream>
 #include <cmath>
 #include <algorithm>
+#include <filesystem>
+
+// クロスプラットフォームの一時ディレクトリパスを取得するヘルパー
+static std::string tmp(const std::string& name) {
+    return (std::filesystem::temp_directory_path() / name).string();
+}
 
 using namespace excellib;
 
@@ -197,8 +203,8 @@ void test_xlsx_roundtrip() {
         auto& sh = wb->add_sheet("Data");
         sh.set_cell("A1", std::string{"saved"});
         sh.set_cell("B2", int64_t{999});
-        wb->save("/tmp/exc_test_save.xlsx");
-        auto wb2 = WorkbookFactory::open("/tmp/exc_test_save.xlsx");
+        wb->save(tmp("exc_test_save.xlsx"));
+        auto wb2 = WorkbookFactory::open(tmp("exc_test_save.xlsx"));
         EXPECT_EQ(get_string(wb2->sheet(0).cell("A1").value),"saved");
         EXPECT_EQ(get_int(wb2->sheet(0).cell("B2").value),999);
     });
@@ -432,79 +438,79 @@ void test_page_setup() {
     };
 
     RUN("apply portrait A4", {
-        make_xlsx("/tmp/exc_ps1.xlsx");
+        make_xlsx(tmp("exc_ps1.xlsx"));
         PageSetup ps; ps.paper_size=PaperSize::A4; ps.orientation=Orientation::Portrait;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps1.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps1.xlsx","paperSize=\"9\""));
-        EXPECT(raw_contains("/tmp/exc_ps1.xlsx","orientation=\"portrait\""));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps1.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps1.xlsx"),"paperSize=\"9\""));
+        EXPECT(raw_contains(tmp("exc_ps1.xlsx"),"orientation=\"portrait\""));
     });
     RUN("apply landscape", {
-        make_xlsx("/tmp/exc_ps2.xlsx");
+        make_xlsx(tmp("exc_ps2.xlsx"));
         PageSetup ps; ps.orientation=Orientation::Landscape;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps2.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps2.xlsx","orientation=\"landscape\""));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps2.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps2.xlsx"),"orientation=\"landscape\""));
     });
     RUN("apply FitTo::Width", {
-        make_xlsx("/tmp/exc_ps3.xlsx");
+        make_xlsx(tmp("exc_ps3.xlsx"));
         PageSetup ps; ps.fit_to=FitTo::Width; ps.fit_to_pages_wide=1;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps3.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps3.xlsx","fitToPage=\"1\""));
-        EXPECT(raw_contains("/tmp/exc_ps3.xlsx","fitToWidth=\"1\""));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps3.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps3.xlsx"),"fitToPage=\"1\""));
+        EXPECT(raw_contains(tmp("exc_ps3.xlsx"),"fitToWidth=\"1\""));
     });
     RUN("apply FitTo::WidthAndHeight", {
-        make_xlsx("/tmp/exc_ps4.xlsx");
+        make_xlsx(tmp("exc_ps4.xlsx"));
         PageSetup ps; ps.fit_to=FitTo::WidthAndHeight;
         ps.fit_to_pages_wide=1; ps.fit_to_pages_tall=1;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps4.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps4.xlsx","fitToWidth=\"1\""));
-        EXPECT(raw_contains("/tmp/exc_ps4.xlsx","fitToHeight=\"1\""));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps4.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps4.xlsx"),"fitToWidth=\"1\""));
+        EXPECT(raw_contains(tmp("exc_ps4.xlsx"),"fitToHeight=\"1\""));
     });
     RUN("apply print_area", {
-        make_xlsx("/tmp/exc_ps5.xlsx");
+        make_xlsx(tmp("exc_ps5.xlsx"));
         PageSetup ps; ps.print_area=PrintArea::from_range("A1:B20");
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps5.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps5.xlsx","Print_Area"));
-        EXPECT(raw_contains("/tmp/exc_ps5.xlsx","$A$1"));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps5.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps5.xlsx"),"Print_Area"));
+        EXPECT(raw_contains(tmp("exc_ps5.xlsx"),"$A$1"));
     });
     RUN("apply repeat_titles rows", {
-        make_xlsx("/tmp/exc_ps6.xlsx");
+        make_xlsx(tmp("exc_ps6.xlsx"));
         PageSetup ps; RepeatTitles rt; rt.row_start=0; rt.row_end=0; ps.repeat_titles=rt;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps6.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps6.xlsx","Print_Titles"));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps6.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps6.xlsx"),"Print_Titles"));
     });
     RUN("apply gridlines + black_and_white", {
-        make_xlsx("/tmp/exc_ps7.xlsx");
+        make_xlsx(tmp("exc_ps7.xlsx"));
         PageSetup ps; ps.print_gridlines=true; ps.black_and_white=true;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps7.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps7.xlsx","gridLines=\"1\""));
-        EXPECT(raw_contains("/tmp/exc_ps7.xlsx","blackAndWhite=\"1\""));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps7.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps7.xlsx"),"gridLines=\"1\""));
+        EXPECT(raw_contains(tmp("exc_ps7.xlsx"),"blackAndWhite=\"1\""));
     });
     RUN("apply header/footer", {
-        make_xlsx("/tmp/exc_ps8.xlsx");
+        make_xlsx(tmp("exc_ps8.xlsx"));
         PageSetup ps;
         ps.header_footer.odd_header="&C&14Report";
         ps.header_footer.odd_footer="&LPage &P / &N";
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps8.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps8.xlsx","Report"));
-        EXPECT(raw_contains("/tmp/exc_ps8.xlsx","oddFooter"));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps8.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps8.xlsx"),"Report"));
+        EXPECT(raw_contains(tmp("exc_ps8.xlsx"),"oddFooter"));
     });
     RUN("apply empty sheet_name defaults to first sheet", {
-        make_xlsx("/tmp/exc_ps9.xlsx");
+        make_xlsx(tmp("exc_ps9.xlsx"));
         PageSetup ps; ps.orientation=Orientation::Landscape;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps9.xlsx","",ps);
-        EXPECT(raw_contains("/tmp/exc_ps9.xlsx","orientation=\"landscape\""));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps9.xlsx"),"",ps);
+        EXPECT(raw_contains(tmp("exc_ps9.xlsx"),"orientation=\"landscape\""));
     });
     RUN("apply re-opens correctly after modification", {
-        make_xlsx("/tmp/exc_ps10.xlsx");
+        make_xlsx(tmp("exc_ps10.xlsx"));
         PageSetup ps; ps.print_gridlines=true;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps10.xlsx","Sheet1",ps);
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps10.xlsx"),"Sheet1",ps);
         // Must still be a valid XLSX after modification
-        auto wb=WorkbookFactory::open("/tmp/exc_ps10.xlsx");
+        auto wb=WorkbookFactory::open(tmp("exc_ps10.xlsx"));
         EXPECT_EQ(get_string(wb->sheet(0).cell("A1").value),"data");
         EXPECT_EQ(get_int(wb->sheet(0).cell("B2").value),42);
     });
     RUN("combined all settings", {
-        make_xlsx("/tmp/exc_ps_full.xlsx");
+        make_xlsx(tmp("exc_ps_full.xlsx"));
         PageSetup ps;
         ps.paper_size=PaperSize::A4; ps.orientation=Orientation::Landscape;
         ps.fit_to=FitTo::Width; ps.fit_to_pages_wide=1;
@@ -512,12 +518,12 @@ void test_page_setup() {
         ps.margins.left=0.5; ps.margins.right=0.5;
         ps.header_footer.odd_header="&C売上レポート";
         RepeatTitles rt; rt.row_start=0; rt.row_end=0; ps.repeat_titles=rt;
-        ExcelPrinter p; p.apply_page_setup("/tmp/exc_ps_full.xlsx","Sheet1",ps);
-        EXPECT(raw_contains("/tmp/exc_ps_full.xlsx","paperSize=\"9\""));
-        EXPECT(raw_contains("/tmp/exc_ps_full.xlsx","orientation=\"landscape\""));
-        EXPECT(raw_contains("/tmp/exc_ps_full.xlsx","Print_Area"));
-        EXPECT(raw_contains("/tmp/exc_ps_full.xlsx","Print_Titles"));
-        EXPECT(raw_contains("/tmp/exc_ps_full.xlsx","売上レポート"));
+        ExcelPrinter p; p.apply_page_setup(tmp("exc_ps_full.xlsx"),"Sheet1",ps);
+        EXPECT(raw_contains(tmp("exc_ps_full.xlsx"),"paperSize=\"9\""));
+        EXPECT(raw_contains(tmp("exc_ps_full.xlsx"),"orientation=\"landscape\""));
+        EXPECT(raw_contains(tmp("exc_ps_full.xlsx"),"Print_Area"));
+        EXPECT(raw_contains(tmp("exc_ps_full.xlsx"),"Print_Titles"));
+        EXPECT(raw_contains(tmp("exc_ps_full.xlsx"),"売上レポート"));
     });
 }
 
@@ -540,12 +546,12 @@ void test_printer() {
     RUN("to_pdf with empty path throws PrintError", {
         ExcelPrinter p;
         PdfOptions o; // output_path=""
-        EXPECT_THROWS(p.to_pdf("/tmp/exc_ps_full.xlsx",o), PrintError);
+        EXPECT_THROWS(p.to_pdf(tmp("exc_ps_full.xlsx"),o), PrintError);
     });
     RUN("to_pdf requires output_path", {
         ExcelPrinter p;
         PdfOptions opts; // output_path=""
-        EXPECT_THROWS(p.to_pdf("/tmp/exc_ps_full.xlsx", opts), PrintError);
+        EXPECT_THROWS(p.to_pdf(tmp("exc_ps_full.xlsx"), opts), PrintError);
     });
 }
 
@@ -560,44 +566,44 @@ void test_batch_printer() {
         wb->add_sheet(sheet).set_cell("A1", int64_t{val});
         wb->save(path);
     };
-    make("/tmp/batch1.xlsx", "Sheet1", 1);
-    make("/tmp/batch2.xlsx", "Report", 2);
-    make("/tmp/batch3.xlsx", "Data",   3);
+    make(tmp("batch1.xlsx"), "Sheet1", 1);
+    make(tmp("batch2.xlsx"), "Report", 2);
+    make(tmp("batch3.xlsx"), "Data",   3);
 
     RUN("add jobs via fluent API", {
         BatchPrinter bp;
-        bp.add("/tmp/batch1.xlsx", "Sheet1")
-          .add("/tmp/batch2.xlsx", "Report")
-          .add("/tmp/batch3.xlsx");
+        bp.add(tmp("batch1.xlsx"), "Sheet1")
+          .add(tmp("batch2.xlsx"), "Report")
+          .add(tmp("batch3.xlsx"));
         EXPECT_EQ(bp.job_count(), 3u);
     });
     RUN("add_all from vector", {
         BatchPrinter bp;
         std::vector<PrintJob> jobs = {
-            PrintJob::make("/tmp/batch1.xlsx", "Sheet1"),
-            PrintJob::make("/tmp/batch2.xlsx", "Report"),
+            PrintJob::make(tmp("batch1.xlsx"), "Sheet1"),
+            PrintJob::make(tmp("batch2.xlsx"), "Report"),
         };
         bp.add_all(jobs);
         EXPECT_EQ(bp.job_count(), 2u);
     });
     RUN("clear resets job list", {
         BatchPrinter bp;
-        bp.add("/tmp/batch1.xlsx").add("/tmp/batch2.xlsx");
+        bp.add(tmp("batch1.xlsx")).add(tmp("batch2.xlsx"));
         EXPECT_EQ(bp.job_count(), 2u);
         bp.clear();
         EXPECT_EQ(bp.job_count(), 0u);
     });
     RUN("PrintJob::make with all fields", {
         PageSetup ps; ps.orientation = Orientation::Landscape;
-        auto job = PrintJob::make("/tmp/batch1.xlsx", "Sheet1", ps, "Q1_Sales");
-        EXPECT_EQ(job.file_path, "/tmp/batch1.xlsx");
+        auto job = PrintJob::make(tmp("batch1.xlsx"), "Sheet1", ps, "Q1_Sales");
+        EXPECT_EQ(job.file_path, tmp("batch1.xlsx"));
         EXPECT_EQ(job.sheet_name, "Sheet1");
         EXPECT_EQ(job.label, "Q1_Sales");
         EXPECT(job.setup.has_value());
         EXPECT(job.setup->orientation == Orientation::Landscape);
     });
     RUN("PrintJob without setup", {
-        auto job = PrintJob::make("/tmp/batch1.xlsx");
+        auto job = PrintJob::make(tmp("batch1.xlsx"));
         EXPECT(!job.setup.has_value());
         EXPECT(job.sheet_name.empty());
     });
@@ -619,16 +625,16 @@ void test_batch_printer() {
     });
     RUN("job fluent add sets count", {
         BatchPrinter bp;
-        bp.add("/tmp/batch1.xlsx","Sheet1")
-          .add("/tmp/batch2.xlsx","Report")
-          .add("/tmp/batch3.xlsx","Data");
+        bp.add(tmp("batch1.xlsx"),"Sheet1")
+          .add(tmp("batch2.xlsx"),"Report")
+          .add(tmp("batch3.xlsx"),"Data");
         EXPECT_EQ(bp.job_count(), 3u);
     });
     RUN("job_count after add_all", {
         BatchPrinter bp;
-        bp.add("/tmp/batch1.xlsx")
-          .add("/tmp/batch2.xlsx")
-          .add("/tmp/batch3.xlsx");
+        bp.add(tmp("batch1.xlsx"))
+          .add(tmp("batch2.xlsx"))
+          .add(tmp("batch3.xlsx"));
         EXPECT_EQ(bp.job_count(), 3u);
     });
 }

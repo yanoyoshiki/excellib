@@ -17,15 +17,39 @@ ChatGPT / Claude / Gemini / Copilot など AI 全般を対象としています�
 
 ## ビルド（外部依存なし）
 
+### macOS / Linux
+
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -- -j4
-# テスト
 ./build/test_all
 ```
 
+### Windows — Visual Studio (MSVC)
+
+Developer Command Prompt for VS を開いてから:
+
+```cmd
+cd excellib_v2\excellib_v2
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+.\build\Release\test_all.exe
+```
+
+### Windows — MinGW (Git Bash / MSYS2)
+
+```bash
+cd excellib_v2/excellib_v2
+rm -rf build
+mkdir build && cd build
+cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+cmake --build .
+./test_all.exe
+```
+
+> **注意**: `cmake ..` を実行するとき、必ず `excellib_v2/excellib_v2/` 直下に作った空の `build/` の中で実行すること。既存の `CMakeCache.txt` がある場合は `rm -rf build` で削除してから再作成。
+
 ZLIB は不要（DEFLATE/CRC32 は `src/common/deflate.cpp` に内部実装済み）。
-Windows では Visual Studio / MSVC でも同様にビルドできる。
 
 ---
 

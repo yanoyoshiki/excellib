@@ -60,7 +60,8 @@ BatchPrinter& BatchPrinter::add(const std::string& f, const std::string& s,
     jobs_.push_back({f,s,std::move(ps),l}); return *this;
 }
 BatchPrinter& BatchPrinter::add_all(const std::vector<PrintJob>& v) {
-    for (auto& j:v) jobs_.push_back(j); return *this;
+    for (auto& j:v) { jobs_.push_back(j); }
+    return *this;
 }
 
 void BatchPrinter::log(size_t done, const PrintJob& job, const std::string& msg) {

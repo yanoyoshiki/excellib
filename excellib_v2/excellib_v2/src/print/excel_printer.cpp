@@ -9,13 +9,13 @@
 #include <windows.h>
 #include <objbase.h>
 #include <winspool.h>
-#include <algorithm>
+#ifdef _MSC_VER
 #pragma comment(lib,"ole32.lib")
 #pragma comment(lib,"oleaut32.lib")
 #pragma comment(lib,"winspool.lib")
-#else
-#include <algorithm>
 #endif
+#endif
+#include <algorithm>
 
 namespace excellib {
 
