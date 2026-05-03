@@ -8,9 +8,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <objbase.h>
+#include <winspool.h>
+#include <algorithm>
 #pragma comment(lib,"ole32.lib")
 #pragma comment(lib,"oleaut32.lib")
 #pragma comment(lib,"winspool.lib")
+#else
+#include <algorithm>
 #endif
 
 namespace excellib {
@@ -62,6 +66,19 @@ std::string ExcelPrinter::default_printer() const {
 }
 
 // ============================================================
+//  VBScript エスケープ
+// ============================================================
+static std::string vbs_escape(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '"') out += "\"\"";
+        else if (c == '\r' || c == '\n') {}
+        else out += c;
+    }
+    return out;
+}
+
+// ============================================================
 //  PageSetup → VBScript 変換
 // ============================================================
 static std::string ps_to_vbs(const std::string& ws, const PageSetup& ps) {
@@ -92,13 +109,13 @@ static std::string ps_to_vbs(const std::string& ws, const PageSetup& ps) {
 
     auto& hf = ps.header_footer;
     if (!hf.odd_header.empty())
-        o << ws << ".PageSetup.CenterHeader = \"" << hf.odd_header << "\"\n";
+        o << ws << ".PageSetup.CenterHeader = \"" << vbs_escape(hf.odd_header) << "\"\n";
     if (!hf.odd_footer.empty())
-        o << ws << ".PageSetup.CenterFooter = \"" << hf.odd_footer << "\"\n";
+        o << ws << ".PageSetup.CenterFooter = \"" << vbs_escape(hf.odd_footer) << "\"\n";
     if (!hf.even_header.empty())
-        o << ws << ".PageSetup.EvenHeader = \"" << hf.even_header << "\"\n";
+        o << ws << ".PageSetup.EvenHeader = \"" << vbs_escape(hf.even_header) << "\"\n";
     if (!hf.even_footer.empty())
-        o << ws << ".PageSetup.EvenFooter = \"" << hf.even_footer << "\"\n";
+        o << ws << ".PageSetup.EvenFooter = \"" << vbs_escape(hf.even_footer) << "\"\n";
 
     o << ws << ".PageSetup.PrintGridlines = "
       << (ps.print_gridlines ? "True" : "False") << "\n"
@@ -154,7 +171,19 @@ static bool run_vbs(const std::string& script, std::string& err_out) {
         "  f.Close\n"
         "End If\n";
 
-    { std::ofstream f(vbs); f << full; }
+    {
+#ifdef _WIN32
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, full.c_str(), -1, nullptr, 0);
+        std::wstring wfull(wlen, 0);
+        MultiByteToWideChar(CP_UTF8, 0, full.c_str(), -1, &wfull[0], wlen);
+        int mlen = WideCharToMultiByte(CP_ACP, 0, wfull.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        std::string acp(mlen, 0);
+        WideCharToMultiByte(CP_ACP, 0, wfull.c_str(), -1, &acp[0], mlen, nullptr, nullptr);
+        std::ofstream f(vbs, std::ios::binary); f << acp;
+#else
+        std::ofstream f(vbs); f << full;
+#endif
+    }
     int ret = std::system(("cscript //nologo \"" + std::string(vbs) + "\"").c_str());
     { std::ifstream f(log); if(f) std::getline(f, err_out); }
     DeleteFileA(vbs); DeleteFileA(log);
@@ -188,16 +217,16 @@ PrintResult ExcelPrinter::excel_to_pdf(const std::string& path,
     vbs << "Dim xl,wb,ws\n"
         << "Set xl=CreateObject(\"Excel.Application\")\n"
         << "xl.Visible=False\nxl.DisplayAlerts=False\n"
-        << "Set wb=xl.Workbooks.Open(\"" << ai << "\")\n";
+        << "Set wb=xl.Workbooks.Open(\"" << vbs_escape(ai) << "\")\n";
 
     if (!sheet.empty())
-        vbs << "Set ws=wb.Sheets(\"" << sheet << "\")\nws.Activate\n";
+        vbs << "Set ws=wb.Sheets(\"" << vbs_escape(sheet) << "\")\nws.Activate\n";
     else
         vbs << "Set ws=wb.ActiveSheet\n";
 
     if (ps) vbs << ps_to_vbs("ws", *ps);
 
-    vbs << "ws.ExportAsFixedFormat Type:=0,Filename:=\"" << ao << "\","
+    vbs << "ws.ExportAsFixedFormat Type:=0,Filename:=\"" << vbs_escape(ao) << "\","
         << "Quality:=0,IncludeDocProperties:=True,"
         << "IgnorePrintAreas:=False,OpenAfterPublish:="
         << (opts.open_after ? "True" : "False") << "\n"
@@ -224,12 +253,12 @@ PrintResult ExcelPrinter::excel_print(const std::string& path,
         << "xl.Visible=False\nxl.DisplayAlerts=False\n";
 
     if (!po.printer_name.empty())
-        vbs << "xl.ActivePrinter=\"" << po.printer_name << "\"\n";
+        vbs << "xl.ActivePrinter=\"" << vbs_escape(po.printer_name) << "\"\n";
 
-    vbs << "Set wb=xl.Workbooks.Open(\"" << ai << "\")\n";
+    vbs << "Set wb=xl.Workbooks.Open(\"" << vbs_escape(ai) << "\")\n";
 
     if (!sheet.empty())
-        vbs << "Set ws=wb.Sheets(\"" << sheet << "\")\nws.Activate\n";
+        vbs << "Set ws=wb.Sheets(\"" << vbs_escape(sheet) << "\")\nws.Activate\n";
     else
         vbs << "Set ws=wb.ActiveSheet\n";
 

@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## [3.0.0] - 2026-05-03
+
+### Breaking Changes
+- `OpenOptions` から `preserve_formulas`, `preserve_styles`, `fail_on_unsupported` を削除（実装されていなかったため）
+- `SaveOptions` から `recalculate` を削除（Excel エンジンなしでは不可能なため）
+- XLS 書き込み（`save`/`to_bytes` に `FileFormat::XLS` を渡すこと）は `WriteError` が発生する（以前と同様だが API から明示化）
+- XLS の `Cell::formula` が `"<formula>"` の代わりに `std::nullopt` を返すようになった
+
+### Added
+- `ParseWarning` 構造体と `WarningCallback` typedef を追加
+- `OpenOptions::on_warning` と `OpenOptions::strict` を追加
+- `Sheet::merge(range)` / `unmerge(range)` / `merged_ranges()` を追加（XLSX 読み書き・XLS 読み込みのみ）
+- `Sheet::set_row(row, values)` を追加
+- `Sheet::col(col_idx)` を追加
+- `set_cell(addr, const char*)` / `set_cell(addr, int)` / `set_cell(addr, long)` オーバーロードを追加
+- XLSX open → save で charts, drawings, images, comments などの未知エントリを保持するようになった（passthrough mode）
+- XLSX open → save で元の styles.xml を保持するようになった
+- `CellRange` 構造体を追加（`from_a1()` / `to_a1()` 対応）
+- VBScript 生成でシート名・ヘッダ・フッタの特殊文字をエスケープするようになった
+- Windows 環境の VBScript を CP932 で出力するようになった（日本語文字化け修正）
+
+### Fixed
+- XLS MULRK レコードの size_t アンダーフローによるクラッシュを修正
+- XLSX パーサの複数箇所で `catch(...)` が警告なく握りつぶしていた問題を修正
+- `XlsxWorkbook::to_bytes(FileFormat::XLS, ...)` が WriteError を正しく throw するように修正
+
+---
+
 ## v2.0.0
 
 ### 新機能

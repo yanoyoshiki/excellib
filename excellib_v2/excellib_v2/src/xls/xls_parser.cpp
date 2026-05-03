@@ -1,6 +1,7 @@
 #include "excellib/xls_parser.hpp"
 #include <cstring>
 #include <cmath>
+#include <cstdio>
 #include <algorithm>
 #include <sstream>
 #include <fstream>
@@ -170,6 +171,14 @@ std::vector<Cell> XlsSheet::row(uint32_t r) const {
     auto ri=data_.find(r); if(ri!=data_.end()) for(auto&[c,x]:ri->second) out.push_back(x);
     return out;
 }
+std::vector<Cell> XlsSheet::col(uint32_t col_idx) const {
+    std::vector<Cell> out;
+    for (uint32_t r = 0; r < row_count_; ++r) {
+        auto oc = try_cell(r, col_idx);
+        if (oc) out.push_back(*oc);
+    }
+    return out;
+}
 std::vector<Cell> XlsSheet::cells() const {
     std::vector<Cell> out;
     for(auto&[r,cols]:data_) for(auto&[c,x]:cols) if(!x.is_blank()) out.push_back(x);
@@ -182,6 +191,19 @@ void XlsSheet::set_cell(uint32_t r,uint32_t c,const CellValue& v){Cell x;x.addre
 void XlsSheet::set_cell(const std::string& a,const CellValue& v){auto addr=CellAddress::from_a1(a);set_cell(addr.row,addr.col,v);}
 void XlsSheet::set_formula(const std::string& a,const std::string& f){
     auto addr=CellAddress::from_a1(a);Cell c;c.address=addr;c.type=CellType::Formula;c.formula=f;c.value=BlankValue{};put_cell(c);
+}
+void XlsSheet::set_row(uint32_t row_idx, const std::vector<CellValue>& values) {
+    for (uint32_t c = 0; c < static_cast<uint32_t>(values.size()); ++c)
+        set_cell(row_idx, c, values[c]);
+}
+void XlsSheet::merge(const CellRange& range) {
+    throw WriteError("XLS is read-only");
+}
+void XlsSheet::unmerge(const CellRange& range) {
+    throw WriteError("XLS is read-only");
+}
+std::vector<CellRange> XlsSheet::merged_ranges() const {
+    return merges_;
 }
 
 void XlsWorkbook::add_parsed_sheet(std::unique_ptr<XlsSheet> s){sheets_.push_back(std::move(s));}
@@ -198,13 +220,11 @@ void XlsWorkbook::rename_sheet(size_t i,const std::string& n){
     old->for_each_cell([&](const Cell& c){ns->put_cell(c);});
     ns->set_dimensions(old->row_count(),old->col_count());sheets_[i]=std::move(ns);
 }
-void XlsWorkbook::save(const std::string& p,const SaveOptions& o) const {
-    auto b=to_bytes(o.format==FileFormat::Auto?FileFormat::XLS:o.format,o);
-    std::ofstream f(p,std::ios::binary);if(!f)throw IOError("Cannot write: "+p);
-    f.write(reinterpret_cast<const char*>(b.data()),static_cast<std::streamsize>(b.size()));
+void XlsWorkbook::save(const std::string&,const SaveOptions&) const {
+    throw WriteError("XLS write is not supported. Open the file and re-save as XLSX using FileFormat::XLSX.");
 }
 std::vector<uint8_t> XlsWorkbook::to_bytes(FileFormat,const SaveOptions&) const {
-    throw WriteError("XLS write not implemented. Use save() with FileFormat::XLSX.");
+    throw WriteError("XLS write is not supported. Open the file and re-save as XLSX using FileFormat::XLSX.");
 }
 
 static constexpr uint8_t OLE2_MAGIC[8]={0xD0,0xCF,0x11,0xE0,0xA1,0xB1,0x1A,0xE1};
@@ -304,6 +324,12 @@ std::vector<BiffRecord> XlsParser::read_records(const std::vector<uint8_t>& stre
     return recs;
 }
 
+static void require_size(const BiffRecord& r, size_t n, const char* where) {
+    if (r.data.size() < n)
+        throw ParseError(std::string(where) + ": record too short (" +
+                         std::to_string(r.data.size()) + " < " + std::to_string(n) + ")");
+}
+
 std::unique_ptr<XlsWorkbook> XlsParser::parse(const std::vector<uint8_t>& raw) {
     auto stream=extract_workbook_stream(raw);
     auto recs  =read_records(stream);
@@ -348,6 +374,7 @@ std::unique_ptr<XlsWorkbook> XlsParser::parse(const std::vector<uint8_t>& raw) {
         if(r.type==RecordType::EOF_){wb->add_parsed_sheet(std::move(cur));cur.reset();continue;}
 
         if(r.type==RecordType::DIMENSION&&r.data.size()>=10){
+            require_size(r,10,"DIMENSION");
             uint32_t rf=r.u32(0),rl=r.u32(4);
             uint16_t cf=r.u16(8),cl=r.data.size()>=12?r.u16(10):cf;
             cur->set_dimensions(rl>rf?rl-rf:0, cl>cf?uint32_t(cl-cf):0);
@@ -355,6 +382,7 @@ std::unique_ptr<XlsWorkbook> XlsParser::parse(const std::vector<uint8_t>& raw) {
             Cell c;c.address={r.u16(0),r.u16(2)};c.type=CellType::Number;c.value=r.f64(6);
             c.style=xf_to_style(r.u16(4),ctx.xf_table,ctx.formats);cur->put_cell(c);
         } else if(r.type==RecordType::LABELSST&&r.data.size()>=10){
+            require_size(r,10,"LABELSST");
             Cell c;c.address={r.u16(0),r.u16(2)};c.type=CellType::String;
             c.value=ctx.sst.get(r.u32(6));c.style=xf_to_style(r.u16(4),ctx.xf_table,ctx.formats);cur->put_cell(c);
         } else if(r.type==RecordType::LABEL&&r.data.size()>=6){
@@ -368,16 +396,20 @@ std::unique_ptr<XlsWorkbook> XlsParser::parse(const std::vector<uint8_t>& raw) {
             else{c.type=CellType::Boolean;c.value=bool(val!=0);}
             cur->put_cell(c);
         } else if(r.type==RecordType::RK&&r.data.size()>=10){
+            require_size(r,10,"RK");
             Cell c;c.address={r.u16(0),r.u16(2)};c.type=CellType::Number;c.value=decode_rk(r.u32(6));
             c.style=xf_to_style(r.u16(4),ctx.xf_table,ctx.formats);cur->put_cell(c);
-        } else if(r.type==RecordType::MULRK&&r.data.size()>=10){
-            uint16_t row_i=r.u16(0),col_f=r.u16(2);
-            size_t cnt=(r.data.size()-4)/6;
-            for(size_t k=0;k<cnt;++k){
-                size_t base=4+k*6; if(base+6>r.data.size()) break;
-                Cell c;c.address={uint32_t(row_i),uint32_t(col_f+k)};c.type=CellType::Number;
-                uint16_t xi=r.u16(base);uint32_t rv=r.u32(base+2);
-                c.value=decode_rk(rv);c.style=xf_to_style(xi,ctx.xf_table,ctx.formats);cur->put_cell(c);
+        } else if(r.type==RecordType::MULRK){
+            require_size(r,4,"MULRK");
+            int64_t cnt=(int64_t(r.data.size())-4)/6;
+            if(cnt>0){
+                uint16_t row_i=r.u16(0),col_f=r.u16(2);
+                for(int64_t k=0;k<cnt;++k){
+                    size_t base=4+size_t(k)*6; if(base+6>r.data.size()) break;
+                    Cell c;c.address={uint32_t(row_i),uint32_t(col_f+k)};c.type=CellType::Number;
+                    uint16_t xi=r.u16(base);uint32_t rv=r.u32(base+2);
+                    c.value=decode_rk(rv);c.style=xf_to_style(xi,ctx.xf_table,ctx.formats);cur->put_cell(c);
+                }
             }
         } else if(r.type==RecordType::FORMULA&&r.data.size()>=14){
             Cell c;c.address={r.u16(0),r.u16(2)};c.type=CellType::Formula;
@@ -390,10 +422,26 @@ std::unique_ptr<XlsWorkbook> XlsParser::parse(const std::vector<uint8_t>& raw) {
                 else if(t==3){c.type=CellType::Blank;c.value=BlankValue{};}
                 else c.value=std::string("<string>");
             } else {c.value=r.f64(6);}
-            c.formula="<formula>";cur->put_cell(c);
+            c.formula=std::nullopt;cur->put_cell(c);
         } else if(r.type==RecordType::BLANK&&r.data.size()>=6){
             Cell c;c.address={r.u16(0),r.u16(2)};c.type=CellType::Blank;c.value=BlankValue{};
             c.style=xf_to_style(r.u16(4),ctx.xf_table,ctx.formats);cur->put_cell(c);
+        } else if(r.type==RecordType::MERGEDCELLS&&r.data.size()>=2){
+            uint16_t cnt=r.u16(0);
+            for(uint16_t mi=0;mi<cnt;++mi){
+                size_t base=2+size_t(mi)*8;
+                if(base+8>r.data.size()) break;
+                uint16_t rf=r.u16(base),rl=r.u16(base+2);
+                uint16_t cf=r.u16(base+4),cl=r.u16(base+6);
+                cur->merges_.push_back({uint32_t(rf),uint32_t(cf),uint32_t(rl),uint32_t(cl)});
+            }
+        } else if(r.type!=RecordType::EOF_&&r.type!=RecordType::ROW&&
+                  r.type!=RecordType::CONTINUE&&r.type!=RecordType::BLANK&&
+                  r.type!=RecordType::MULBLANK&&r.type!=RecordType::BOF){
+            warn(ParseWarning::Kind::UnsupportedRecord, "XLS",
+                 "unhandled record type 0x" + [](uint16_t v){
+                     char buf[8]; std::snprintf(buf,sizeof(buf),"%04X",v); return std::string(buf);
+                 }(r.raw_type));
         }
     }
     return wb;

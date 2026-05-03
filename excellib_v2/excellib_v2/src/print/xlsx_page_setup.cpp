@@ -1,5 +1,6 @@
 #include "excellib/excel_printer.hpp"
 #include "excellib/xlsx_parser.hpp"
+#include "../common/deflate.hpp"
 #include <vector>
 #include <string>
 #include <sstream>
@@ -7,7 +8,6 @@
 #include <cstring>
 #include <algorithm>
 #include <stdexcept>
-#include <zlib.h>
 
 namespace excellib {
 
@@ -84,11 +84,7 @@ static std::vector<ZipEntry2> zip_read_all(const std::vector<uint8_t>& data) {
         if (method==0) {
             e.data.assign(data.data()+doff, data.data()+doff+comp_sz);
         } else if (method==8) {
-            e.data.resize(uncomp_sz);
-            z_stream zs{}; zs.next_in=const_cast<Bytef*>(data.data()+doff);
-            zs.avail_in=comp_sz; zs.next_out=e.data.data(); zs.avail_out=uncomp_sz;
-            inflateInit2(&zs,-MAX_WBITS); ::inflate(&zs,Z_FINISH); inflateEnd(&zs);
-            e.data.resize(zs.total_out);
+            e.data = excellib::detail::deflate_decompress(data.data()+doff, comp_sz, uncomp_sz);
         }
         entries.push_back(std::move(e));
     }
@@ -99,7 +95,7 @@ static std::vector<uint8_t> zip_write_all(std::vector<ZipEntry2>& entries) {
     std::vector<uint8_t> out;
     for (auto& e : entries) {
         e.local_offset = uint32_t(out.size());
-        e.crc = uint32_t(crc32(0L, e.data.data(), uInt(e.data.size())));
+        e.crc = excellib::detail::crc32_compute(e.data.data(), e.data.size());
         append_le32(out,0x04034B50); append_le16(out,20); append_le16(out,0);
         append_le16(out,0); append_le16(out,0); append_le16(out,0);
         append_le32(out,e.crc);

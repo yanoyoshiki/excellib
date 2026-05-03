@@ -1,6 +1,7 @@
 #include "excellib/excellib.hpp"
 #include "excellib/xls_parser.hpp"
 #include "excellib/xlsx_parser.hpp"
+#include "../src/common/deflate.hpp"
 #include <iostream>
 #include <cassert>
 #include <stdexcept>
@@ -632,6 +633,212 @@ void test_batch_printer() {
 }
 
 // ============================================================
+//  SECTION 11: DEFLATE / CRC32
+// ============================================================
+static std::vector<uint8_t> from_hex(const char* h) {
+    std::vector<uint8_t> v;
+    for (; h[0] && h[1]; h += 2) {
+        auto hex = [](char c) -> uint8_t {
+            if (c >= '0' && c <= '9') return uint8_t(c - '0');
+            if (c >= 'a' && c <= 'f') return uint8_t(c - 'a' + 10);
+            return uint8_t(c - 'A' + 10);
+        };
+        v.push_back(uint8_t((hex(h[0]) << 4) | hex(h[1])));
+    }
+    return v;
+}
+
+void test_deflate() {
+    group("DEFLATE / CRC32");
+
+    // ── CRC32 ─────────────────────────────────────────────
+    RUN("CRC32 Hello World", {
+        auto s = reinterpret_cast<const uint8_t*>("Hello, World!");
+        EXPECT_EQ(excellib::detail::crc32_compute(s, 13), 0xEC4AC3D0u);
+    });
+    RUN("CRC32 excellib test", {
+        auto s = reinterpret_cast<const uint8_t*>("excellib test");
+        EXPECT_EQ(excellib::detail::crc32_compute(s, 13), 0x9EED09FFu);
+    });
+    RUN("CRC32 空データ = 0x00000000", {
+        EXPECT_EQ(excellib::detail::crc32_compute(nullptr, 0), 0x00000000u);
+    });
+
+    // ── 非圧縮ブロック (btype=0) ──────────────────────────
+    RUN("stored block: Hello", {
+        // BFINAL=1 BTYPE=00 + align + LEN=5 NLEN=~5 + "Hello"
+        auto comp = from_hex("010500FAFF48656C6C6F");
+        auto out  = excellib::detail::deflate_decompress(comp.data(), comp.size(), 5);
+        EXPECT(out == std::vector<uint8_t>({'H','e','l','l','o'}));
+    });
+
+    // ── 固定ハフマン (btype=1) ────────────────────────────
+    // Python: zlib.compressobj(6, DEFLATED, -15).compress(b"Hello, DEFLATE!") + flush()
+    RUN("fixed huffman: Hello, DEFLATE!", {
+        auto comp = from_hex("f348cdc9c9d751707175f3710c71550400");
+        auto out  = excellib::detail::deflate_decompress(comp.data(), comp.size(), 15);
+        std::string s(out.begin(), out.end());
+        EXPECT_EQ(s, "Hello, DEFLATE!");
+    });
+    // 反復データ (後方参照を含む): b"A"*22
+    RUN("fixed huffman: 22xA (back-reference)", {
+        auto comp = from_hex("7374c40600");
+        auto out  = excellib::detail::deflate_decompress(comp.data(), comp.size(), 22);
+        EXPECT_EQ(out.size(), 22u);
+        EXPECT(std::all_of(out.begin(), out.end(), [](uint8_t b){ return b == 'A'; }));
+    });
+    // アルファベット×3 (反復パターン)
+    RUN("fixed huffman: alphabet x3", {
+        auto comp = from_hex(
+            "4b4c4a4e494d4bcfc8cccacec9cdcb2f282c2a2e292d2b"
+            "afa8ac4a24430600");
+        auto out  = excellib::detail::deflate_decompress(comp.data(), comp.size(), 78);
+        EXPECT_EQ(out.size(), 78u);
+        std::string s(out.begin(), out.end());
+        std::string expected;
+        for (int i = 0; i < 3; ++i) expected += "abcdefghijklmnopqrstuvwxyz";
+        EXPECT_EQ(s, expected);
+    });
+    // pangram (多種文字)
+    RUN("fixed huffman: pangram", {
+        auto comp = from_hex(
+            "0bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d"
+            "2856c82f4b2d5228014ae72456552aa4e4a70300");
+        auto out  = excellib::detail::deflate_decompress(comp.data(), comp.size(), 43);
+        std::string s(out.begin(), out.end());
+        EXPECT_EQ(s, "The quick brown fox jumps over the lazy dog");
+    });
+
+    // ── 動的ハフマン (btype=2) ────────────────────────────
+    // Python: zlib.compressobj(6, DEFLATED, -15).compress(xml2_bytes) + flush()
+    RUN("dynamic huffman: XLSX-like XML", {
+        auto comp = from_hex(
+            "4d8ed10ac2300c457fa5e4dda50e1191b64311bf403fa074"
+            "711baeed68cba67f6f3765f8126e4e38e18aea657b365288"
+            "9d7712b6050746cef8ba738d84fbedba39008b49bb5af7de"
+            "91843745a894987c78c69628b1ecbb28a14d69382246d392"
+            "d5b1f003b97c79f86075ca6b68300e8174bd48b6c792f33d"
+            "5add39506261179db412c14f2ce41e999a399ce634aa5d29"
+            "705402cd0f9fbf78cbf9ca31ab79fefdc2b5a4fa00");
+        const std::string expected =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+            "<sheetData><row r=\"1\"><c r=\"A1\"><v>42</v></c>"
+            "<c r=\"B1\"><v>100</v></c></row></sheetData></worksheet>";
+        auto out = excellib::detail::deflate_decompress(comp.data(), comp.size(), expected.size());
+        std::string s(out.begin(), out.end());
+        EXPECT_EQ(s, expected);
+    });
+
+    // ── エラーケース ──────────────────────────────────────
+    RUN("空データで例外", {
+        std::vector<uint8_t> empty;
+        bool threw = false;
+        try { excellib::detail::deflate_decompress(empty.data(), 0); }
+        catch (std::exception&) { threw = true; }
+        EXPECT(threw);
+    });
+    RUN("btype=3 (予約済み) で例外", {
+        // BFINAL=1 BTYPE=11 → 0b00000111 = 0x07
+        std::vector<uint8_t> bad = {0x07};
+        bool threw = false;
+        try { excellib::detail::deflate_decompress(bad.data(), bad.size()); }
+        catch (std::exception&) { threw = true; }
+        EXPECT(threw);
+    });
+}
+
+// ============================================================
+//  SECTION 12: 結合セル / set_row / col / 警告コールバック
+// ============================================================
+void test_new_features() {
+    group("New Features v3.0.0");
+
+    RUN("merge_cells_roundtrip", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", std::string{"merged"});
+        sh.merge("A1:C3");
+        EXPECT(sh.merged_ranges().size() == 1);
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes);
+        EXPECT(wb2->sheet(0).merged_ranges().size() == 1);
+        auto r = wb2->sheet(0).merged_ranges()[0];
+        EXPECT_EQ(r.row1, uint32_t(0)); EXPECT_EQ(r.col1, uint32_t(0));
+        EXPECT_EQ(r.row2, uint32_t(2)); EXPECT_EQ(r.col2, uint32_t(2));
+    });
+
+    RUN("merge_unmerge", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.merge("B2:D4");
+        EXPECT_EQ(sh.merged_ranges().size(), 1u);
+        auto rng = sh.merged_ranges()[0];
+        EXPECT_EQ(rng.row1, 1u); EXPECT_EQ(rng.col1, 1u);
+        EXPECT_EQ(rng.row2, 3u); EXPECT_EQ(rng.col2, 3u);
+        sh.unmerge(rng);
+        EXPECT_EQ(sh.merged_ranges().size(), 0u);
+    });
+
+    RUN("CellRange::from_a1 and to_a1", {
+        auto r = CellRange::from_a1("A1:C3");
+        EXPECT_EQ(r.row1, 0u); EXPECT_EQ(r.col1, 0u);
+        EXPECT_EQ(r.row2, 2u); EXPECT_EQ(r.col2, 2u);
+        EXPECT_EQ(r.to_a1(), "A1:C3");
+    });
+
+    RUN("set_cell_overloads", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", "hello");
+        sh.set_cell("B1", 42);
+        sh.set_cell("C1", 3.14);
+        EXPECT(is_string(sh.cell("A1").value));
+        EXPECT(is_int(sh.cell("B1").value));
+        EXPECT(is_double(sh.cell("C1").value));
+        EXPECT_EQ(get_string(sh.cell("A1").value), std::string("hello"));
+        EXPECT_EQ(get_int(sh.cell("B1").value), int64_t(42));
+    });
+
+    RUN("set_row_and_col", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_row(0, {std::string("a"), int64_t(1), 2.0});
+        EXPECT_EQ(get_string(sh.cell("A1").value), std::string("a"));
+        EXPECT_EQ(get_int(sh.cell("B1").value), int64_t(1));
+        auto c = sh.col(0);
+        EXPECT(c.size() >= 1);
+        EXPECT_EQ(get_string(c[0].value), std::string("a"));
+    });
+
+    RUN("warning_callback", {
+        std::vector<ParseWarning> warns;
+        OpenOptions opts;
+        opts.on_warning = [&](const ParseWarning& w) { warns.push_back(w); };
+        auto wb = WorkbookFactory::create();
+        EXPECT(warns.empty());
+    });
+
+    RUN("xls_merge_write_throws", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", std::string{"data"});
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes);
+        auto bytes2 = wb2->to_bytes(FileFormat::XLSX, {});
+        EXPECT(!bytes2.empty());
+    });
+
+    RUN("XLS write throws WriteError", {
+        auto wb = WorkbookFactory::create();
+        wb->add_sheet("S");
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto xls_wb = WorkbookFactory::open(bytes);
+        EXPECT_THROWS(xls_wb->to_bytes(FileFormat::XLS, {}), WriteError);
+    });
+}
+
+// ============================================================
 //  Main
 // ============================================================
 int main() {
@@ -649,6 +856,8 @@ int main() {
     test_page_setup();
     test_printer();
     test_batch_printer();
+    test_deflate();
+    test_new_features();
 
     std::cout<<"\n╔══════════════════════════════════════════╗\n";
     std::cout<<"║  Results: "<<g_pass<<" passed  "<<g_fail<<" failed  "<<g_skip<<" skipped        ║\n";

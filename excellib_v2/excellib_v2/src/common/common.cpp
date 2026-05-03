@@ -93,6 +93,28 @@ void Sheet::set_table(const std::string& top_left,
 }
 
 // ============================================================
+//  CellRange
+// ============================================================
+CellRange CellRange::from_a1(std::string_view range_str) {
+    std::string s(range_str);
+    auto colon = s.find(':');
+    if (colon == std::string::npos) {
+        auto addr = CellAddress::from_a1(s);
+        return CellRange{addr.row, addr.col, addr.row, addr.col};
+    }
+    auto a = CellAddress::from_a1(s.substr(0, colon));
+    auto b = CellAddress::from_a1(s.substr(colon + 1));
+    return CellRange{
+        std::min(a.row, b.row), std::min(a.col, b.col),
+        std::max(a.row, b.row), std::max(a.col, b.col)
+    };
+}
+
+std::string CellRange::to_a1() const {
+    return CellAddress{row1, col1}.to_a1() + ":" + CellAddress{row2, col2}.to_a1();
+}
+
+// ============================================================
 //  PrintArea
 // ============================================================
 PrintArea PrintArea::from_range(const std::string& range) {

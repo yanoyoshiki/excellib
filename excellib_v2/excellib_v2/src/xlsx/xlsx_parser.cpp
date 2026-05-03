@@ -1,10 +1,10 @@
 #include "excellib/xlsx_parser.hpp"
+#include "../common/deflate.hpp"
 #include <cstring>
 #include <algorithm>
 #include <sstream>
 #include <fstream>
 #include <stdexcept>
-#include <zlib.h>
 
 namespace excellib::xlsx {
 
@@ -57,20 +57,7 @@ static uint16_t rd16(const uint8_t* p) {
 }
 
 std::vector<uint8_t> ZipReader::inflate(const uint8_t* comp, size_t comp_sz, size_t uncomp_sz) {
-    std::vector<uint8_t> out(uncomp_sz);
-    z_stream zs{};
-    zs.next_in   = const_cast<Bytef*>(comp);
-    zs.avail_in  = static_cast<uInt>(comp_sz);
-    zs.next_out  = out.data();
-    zs.avail_out = static_cast<uInt>(uncomp_sz);
-    if (inflateInit2(&zs, -MAX_WBITS) != Z_OK)
-        throw ParseError("zlib inflateInit2 failed");
-    int ret = ::inflate(&zs, Z_FINISH);
-    inflateEnd(&zs);
-    if (ret != Z_STREAM_END && ret != Z_OK)
-        throw ParseError("zlib inflate failed: ret=" + std::to_string(ret));
-    out.resize(zs.total_out);
-    return out;
+    return excellib::detail::deflate_decompress(comp, comp_sz, uncomp_sz);
 }
 
 void ZipReader::parse(const std::vector<uint8_t>& data) {
@@ -316,6 +303,14 @@ std::vector<Cell> XlsxSheet::row(uint32_t r) const {
     if (ri != data_.end()) for (auto& [c,cell]:ri->second) out.push_back(cell);
     return out;
 }
+std::vector<Cell> XlsxSheet::col(uint32_t col_idx) const {
+    std::vector<Cell> out;
+    for (uint32_t r = 0; r < row_count_; ++r) {
+        auto oc = try_cell(r, col_idx);
+        if (oc) out.push_back(*oc);
+    }
+    return out;
+}
 std::vector<Cell> XlsxSheet::cells() const {
     std::vector<Cell> out;
     for (auto& [r,cols]:data_) for (auto& [c,cell]:cols) if (!cell.is_blank()) out.push_back(cell);
@@ -345,6 +340,21 @@ void XlsxSheet::set_cell(const std::string& a1, const CellValue& v) {
 void XlsxSheet::set_formula(const std::string& a1, const std::string& f) {
     auto a=CellAddress::from_a1(a1);
     Cell c; c.address=a; c.type=CellType::Formula; c.formula=f; c.value=BlankValue{}; put_cell(c);
+}
+void XlsxSheet::set_row(uint32_t row_idx, const std::vector<CellValue>& values) {
+    for (uint32_t c = 0; c < static_cast<uint32_t>(values.size()); ++c)
+        set_cell(row_idx, c, values[c]);
+}
+void XlsxSheet::merge(const CellRange& range) {
+    merges_.push_back(range);
+}
+void XlsxSheet::unmerge(const CellRange& range) {
+    merges_.erase(std::remove_if(merges_.begin(), merges_.end(), [&](const CellRange& r){
+        return r.row1==range.row1 && r.col1==range.col1 && r.row2==range.row2 && r.col2==range.col2;
+    }), merges_.end());
+}
+std::vector<CellRange> XlsxSheet::merged_ranges() const {
+    return merges_;
 }
 
 // ============================================================
@@ -386,13 +396,18 @@ void XlsxWorkbook::rename_sheet(size_t i, const std::string& name) {
     sheets_[i] = std::move(ns);
 }
 void XlsxWorkbook::save(const std::string& path, const SaveOptions& opts) const {
-    auto bytes = to_bytes(FileFormat::XLSX, opts);
+    FileFormat fmt = opts.format == FileFormat::Auto ? FileFormat::XLSX : opts.format;
+    if (fmt == FileFormat::XLS)
+        throw WriteError("XLS write is not supported. Open the file and re-save as XLSX using FileFormat::XLSX.");
+    auto bytes = to_bytes(fmt, opts);
     std::ofstream f(path, std::ios::binary);
     if(!f) throw IOError("Cannot write: "+path);
     f.write(reinterpret_cast<const char*>(bytes.data()),
             static_cast<std::streamsize>(bytes.size()));
 }
-std::vector<uint8_t> XlsxWorkbook::to_bytes(FileFormat, const SaveOptions&) const {
+std::vector<uint8_t> XlsxWorkbook::to_bytes(FileFormat fmt, const SaveOptions&) const {
+    if (fmt == FileFormat::XLS)
+        throw WriteError("XLS write is not supported. Open the file and re-save as XLSX using FileFormat::XLSX.");
     XlsxWriter w; return w.write(*this, {});
 }
 
@@ -403,6 +418,35 @@ CellAddress XlsxParser::parse_ref(const std::string& ref) {
     return CellAddress::from_a1(ref);
 }
 
+static bool is_known_entry(const std::string& path) {
+    if (path == "[Content_Types].xml") return true;
+    if (path == "_rels/.rels") return true;
+    if (path == "xl/workbook.xml") return true;
+    if (path == "xl/_rels/workbook.xml.rels") return true;
+    if (path == "xl/sharedStrings.xml") return true;
+    if (path == "xl/styles.xml") return true;
+    if (path.size() > 17 && path.substr(0,17) == "xl/worksheets/she" &&
+        path.find(".xml") != std::string::npos) return true;
+    if (path.size() > 23 && path.substr(0,23) == "xl/worksheets/_rels/she" &&
+        path.find(".xml.rels") != std::string::npos) return true;
+    return false;
+}
+
+static std::string content_type_for(const std::string& path) {
+    auto dot = path.rfind('.');
+    if (dot == std::string::npos) return "application/octet-stream";
+    std::string ext = path.substr(dot+1);
+    if (ext=="png")  return "image/png";
+    if (ext=="jpg" || ext=="jpeg") return "image/jpeg";
+    if (ext=="gif")  return "image/gif";
+    if (ext=="emf")  return "image/x-emf";
+    if (ext=="wmf")  return "image/x-wmf";
+    if (ext=="xml")  return "application/xml";
+    if (ext=="rels") return "application/vnd.openxmlformats-package.relationships+xml";
+    if (ext=="vml")  return "application/vnd.openxmlformats-officedocument.vmlDrawing";
+    return "application/octet-stream";
+}
+
 std::unique_ptr<XlsxWorkbook> XlsxParser::parse(const std::vector<uint8_t>& data) {
     ZipReader zip(data);
 
@@ -410,7 +454,11 @@ std::unique_ptr<XlsxWorkbook> XlsxParser::parse(const std::vector<uint8_t>& data
     if (zip.has("xl/sharedStrings.xml")) sst.parse(zip.text("xl/sharedStrings.xml"));
 
     XlsxStyles styles;
-    if (zip.has("xl/styles.xml")) styles.parse(zip.text("xl/styles.xml"));
+    std::string styles_xml;
+    if (zip.has("xl/styles.xml")) {
+        styles_xml = zip.text("xl/styles.xml");
+        styles.parse(styles_xml);
+    }
 
     if (!zip.has("xl/workbook.xml")) throw ParseError("XLSX: missing xl/workbook.xml");
 
@@ -420,17 +468,41 @@ std::unique_ptr<XlsxWorkbook> XlsxParser::parse(const std::vector<uint8_t>& data
 
     auto metas = parse_workbook_xml(zip.text("xl/workbook.xml"), rels);
     auto wb = std::make_unique<XlsxWorkbook>();
+    wb->original_styles_xml_ = styles_xml;
 
+    // Collect sheet paths to mark as known
+    std::vector<std::string> sheet_paths;
     for (auto& meta : metas) {
-        // FIX: robust path resolution
         std::string path;
-        if (!meta.path.empty() && meta.path[0] == '/') {
-            path = "xl" + meta.path;                   // absolute: "/worksheets/sheet1.xml"
-        } else if (meta.path.find('/') != std::string::npos) {
-            path = "xl/" + meta.path;                  // relative: "worksheets/sheet1.xml"
-        } else {
-            path = "xl/worksheets/" + meta.path;       // bare name: "sheet1.xml"
+        if (!meta.path.empty() && meta.path[0] == '/')
+            path = "xl" + meta.path;
+        else if (meta.path.find('/') != std::string::npos)
+            path = "xl/" + meta.path;
+        else
+            path = "xl/worksheets/" + meta.path;
+        sheet_paths.push_back(path);
+    }
+
+    // Collect passthrough entries
+    bool has_unknown = false;
+    for (auto& p : zip.paths()) {
+        bool known = is_known_entry(p);
+        if (!known) {
+            for (auto& sp : sheet_paths) if (p == sp) { known = true; break; }
         }
+        if (!known) {
+            wb->passthrough_entries_[p] = zip.get(p).data;
+            has_unknown = true;
+        }
+    }
+    if (has_unknown) {
+        warn(ParseWarning::Kind::UnknownXmlElement, "[Content_Types].xml",
+             "This file contains elements excellib does not parse (they will be preserved on save).");
+    }
+
+    for (size_t si = 0; si < metas.size(); ++si) {
+        auto& meta = metas[si];
+        std::string path = sheet_paths[si];
 
         if (!zip.has(path)) throw ParseError("XLSX: sheet not found in ZIP: " + path);
         wb->add_parsed_sheet(parse_sheet_xml(meta.name, zip.text(path), sst, styles));
@@ -503,15 +575,46 @@ std::unique_ptr<XlsxSheet> XlsxParser::parse_sheet_xml(
                 try {
                     Cell c = parse_cell_element(ref, type, s, v, f, sst, styles);
                     sheet->put_cell(c);
-                } catch (const FormatError&) {
+                } catch (const FormatError& e) {
                     if (opts_.strict_validation) throw;
-                    // non-strict: skip malformed cell
+                    warn(ParseWarning::Kind::MalformedField,
+                         "xl/worksheets/ row cell ref=" + ref, e.what());
+                } catch (const std::exception& e) {
+                    warn(ParseWarning::Kind::DataDropped,
+                         "xl/worksheets/ row cell ref=" + ref, e.what());
                 }
             }
             cp = next_cp;
         }
         pos = re + 6;
     }
+
+    // Parse mergeCells
+    auto mc_start = xml.find("<mergeCells");
+    if (mc_start != std::string::npos) {
+        auto mc_end = xml.find("</mergeCells>", mc_start);
+        if (mc_end == std::string::npos) mc_end = xml.size();
+        std::string blk = xml.substr(mc_start, mc_end - mc_start);
+        size_t p = 0;
+        while (true) {
+            auto mp = blk.find("<mergeCell ", p);
+            if (mp == std::string::npos) break;
+            auto mpe = blk.find('>', mp);
+            if (mpe == std::string::npos) break;
+            std::string el = blk.substr(mp, mpe-mp+1);
+            std::string ref_str = xml_attr(el, "ref");
+            if (!ref_str.empty()) {
+                try {
+                    sheet->merges_.push_back(CellRange::from_a1(ref_str));
+                } catch (const std::exception& e) {
+                    warn(ParseWarning::Kind::MalformedField,
+                         "xl/worksheets/ mergeCells ref=" + ref_str, e.what());
+                }
+            }
+            p = mpe + 1;
+        }
+    }
+
     return sheet;
 }
 
@@ -586,7 +689,7 @@ static std::vector<uint8_t> build_zip(std::vector<ZFile>& files) {
     std::vector<uint8_t> out;
     for (auto& f : files) {
         f.off = uint32_t(out.size());
-        f.crc = uint32_t(crc32(0L, f.data.data(), uInt(f.data.size())));
+        f.crc = excellib::detail::crc32_compute(f.data.data(), f.data.size());
         ap32(out,0x04034B50); ap16(out,20); ap16(out,0); ap16(out,0);
         ap16(out,0); ap16(out,0);
         ap32(out,f.crc); ap32(out,uint32_t(f.data.size())); ap32(out,uint32_t(f.data.size()));
@@ -658,7 +761,15 @@ std::string XlsxWriter::sheet_xml(const XlsxSheet& sh, XlsxSharedStrings& sst) {
         }
         o << "</row>";
     }
-    o << "</sheetData></worksheet>";
+    o << "</sheetData>";
+    auto& merges = sh.merges_;
+    if (!merges.empty()) {
+        o << "<mergeCells count=\"" << merges.size() << "\">";
+        for (auto& m : merges)
+            o << "<mergeCell ref=\"" << esc(m.to_a1()) << "\"/>";
+        o << "</mergeCells>";
+    }
+    o << "</worksheet>";
     return o.str();
 }
 
@@ -667,10 +778,14 @@ std::vector<uint8_t> XlsxWriter::write(const XlsxWorkbook& wb, const SaveOptions
     std::vector<ZFile> files;
     auto names = wb.sheet_names();
 
+    // Track sheet paths for passthrough filtering
+    std::vector<std::string> sheet_paths;
     for (size_t i = 0; i < wb.sheet_count(); ++i) {
         const auto& sh = dynamic_cast<const XlsxSheet&>(wb.sheet(i));
         ZFile f;
-        f.name = "xl/worksheets/sheet" + std::to_string(i+1) + ".xml";
+        std::string sp = "xl/worksheets/sheet" + std::to_string(i+1) + ".xml";
+        sheet_paths.push_back(sp);
+        f.name = sp;
         f.data = sb(sheet_xml(sh, sst));
         files.push_back(std::move(f));
     }
@@ -687,18 +802,22 @@ std::vector<uint8_t> XlsxWriter::write(const XlsxWorkbook& wb, const SaveOptions
         files.push_back({"xl/sharedStrings.xml", sb(o.str())});
     }
 
-    // Minimal styles
-    files.push_back({"xl/styles.xml", sb(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
-        "<fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>"
-        "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill>"
-        "<fill><patternFill patternType=\"gray125\"/></fill></fills>"
-        "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>"
-        "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\"/></cellStyleXfs>"
-        "<cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" xfId=\"0\"/></cellXfs>"
-        "</styleSheet>"
-    )});
+    // styles.xml: prefer original if available
+    if (!wb.original_styles_xml_.empty()) {
+        files.push_back({"xl/styles.xml", sb(wb.original_styles_xml_)});
+    } else {
+        files.push_back({"xl/styles.xml", sb(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+            "<fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>"
+            "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill>"
+            "<fill><patternFill patternType=\"gray125\"/></fill></fills>"
+            "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>"
+            "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\"/></cellStyleXfs>"
+            "<cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" xfId=\"0\"/></cellXfs>"
+            "</styleSheet>"
+        )});
+    }
 
     // workbook.xml
     {
@@ -728,7 +847,16 @@ std::vector<uint8_t> XlsxWriter::write(const XlsxWorkbook& wb, const SaveOptions
         files.push_back({"xl/_rels/workbook.xml.rels", sb(o.str())});
     }
 
-    // content types
+    // Passthrough entries (non-sheet xml)
+    for (auto& [path, data] : wb.passthrough_entries_) {
+        // Skip entries that we've already generated
+        bool skip = false;
+        for (auto& sp : sheet_paths) if (path == sp) { skip = true; break; }
+        if (skip) continue;
+        files.push_back({path, data});
+    }
+
+    // content types — generate ours and append content types for passthrough entries
     {
         std::ostringstream o;
         o << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -741,6 +869,14 @@ std::vector<uint8_t> XlsxWriter::write(const XlsxWorkbook& wb, const SaveOptions
             o<<"<Override PartName=\"/xl/worksheets/sheet"<<i+1<<".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>";
         if (has_ss)
             o<<"<Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/>";
+        // Append content types for passthrough entries
+        for (auto& [path, data] : wb.passthrough_entries_) {
+            if (path.empty() || path[0] == '_') continue; // skip rels
+            std::string dot = path.rfind('.') != std::string::npos ? path.substr(path.rfind('.')+1) : "";
+            if (dot == "rels" || dot == "xml") continue; // covered by Default
+            std::string ct = content_type_for(path);
+            o << "<Override PartName=\"/" << path << "\" ContentType=\"" << ct << "\"/>";
+        }
         o << "</Types>";
         files.push_back({"[Content_Types].xml", sb(o.str())});
     }
