@@ -8,9 +8,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <objbase.h>
+#include <winspool.h>
+#include <algorithm>
 #pragma comment(lib,"ole32.lib")
 #pragma comment(lib,"oleaut32.lib")
 #pragma comment(lib,"winspool.lib")
+#else
+#include <algorithm>
 #endif
 
 namespace excellib {
