@@ -749,6 +749,96 @@ void test_deflate() {
 }
 
 // ============================================================
+//  SECTION 12: 結合セル / set_row / col / 警告コールバック
+// ============================================================
+void test_new_features() {
+    group("New Features v3.0.0");
+
+    RUN("merge_cells_roundtrip", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", std::string{"merged"});
+        sh.merge("A1:C3");
+        EXPECT(sh.merged_ranges().size() == 1);
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes);
+        EXPECT(wb2->sheet(0).merged_ranges().size() == 1);
+        auto r = wb2->sheet(0).merged_ranges()[0];
+        EXPECT_EQ(r.row1, uint32_t(0)); EXPECT_EQ(r.col1, uint32_t(0));
+        EXPECT_EQ(r.row2, uint32_t(2)); EXPECT_EQ(r.col2, uint32_t(2));
+    });
+
+    RUN("merge_unmerge", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.merge("B2:D4");
+        EXPECT_EQ(sh.merged_ranges().size(), 1u);
+        auto rng = sh.merged_ranges()[0];
+        EXPECT_EQ(rng.row1, 1u); EXPECT_EQ(rng.col1, 1u);
+        EXPECT_EQ(rng.row2, 3u); EXPECT_EQ(rng.col2, 3u);
+        sh.unmerge(rng);
+        EXPECT_EQ(sh.merged_ranges().size(), 0u);
+    });
+
+    RUN("CellRange::from_a1 and to_a1", {
+        auto r = CellRange::from_a1("A1:C3");
+        EXPECT_EQ(r.row1, 0u); EXPECT_EQ(r.col1, 0u);
+        EXPECT_EQ(r.row2, 2u); EXPECT_EQ(r.col2, 2u);
+        EXPECT_EQ(r.to_a1(), "A1:C3");
+    });
+
+    RUN("set_cell_overloads", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", "hello");
+        sh.set_cell("B1", 42);
+        sh.set_cell("C1", 3.14);
+        EXPECT(is_string(sh.cell("A1").value));
+        EXPECT(is_int(sh.cell("B1").value));
+        EXPECT(is_double(sh.cell("C1").value));
+        EXPECT_EQ(get_string(sh.cell("A1").value), std::string("hello"));
+        EXPECT_EQ(get_int(sh.cell("B1").value), int64_t(42));
+    });
+
+    RUN("set_row_and_col", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_row(0, {std::string("a"), int64_t(1), 2.0});
+        EXPECT_EQ(get_string(sh.cell("A1").value), std::string("a"));
+        EXPECT_EQ(get_int(sh.cell("B1").value), int64_t(1));
+        auto c = sh.col(0);
+        EXPECT(c.size() >= 1);
+        EXPECT_EQ(get_string(c[0].value), std::string("a"));
+    });
+
+    RUN("warning_callback", {
+        std::vector<ParseWarning> warns;
+        OpenOptions opts;
+        opts.on_warning = [&](const ParseWarning& w) { warns.push_back(w); };
+        auto wb = WorkbookFactory::create();
+        EXPECT(warns.empty());
+    });
+
+    RUN("xls_merge_write_throws", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", std::string{"data"});
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes);
+        auto bytes2 = wb2->to_bytes(FileFormat::XLSX, {});
+        EXPECT(!bytes2.empty());
+    });
+
+    RUN("XLS write throws WriteError", {
+        auto wb = WorkbookFactory::create();
+        wb->add_sheet("S");
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto xls_wb = WorkbookFactory::open(bytes);
+        EXPECT_THROWS(xls_wb->to_bytes(FileFormat::XLS, {}), WriteError);
+    });
+}
+
+// ============================================================
 //  Main
 // ============================================================
 int main() {
@@ -767,6 +857,7 @@ int main() {
     test_printer();
     test_batch_printer();
     test_deflate();
+    test_new_features();
 
     std::cout<<"\n╔══════════════════════════════════════════╗\n";
     std::cout<<"║  Results: "<<g_pass<<" passed  "<<g_fail<<" failed  "<<g_skip<<" skipped        ║\n";

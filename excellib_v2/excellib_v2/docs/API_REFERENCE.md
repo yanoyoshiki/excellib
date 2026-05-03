@@ -37,11 +37,22 @@ std::unique_ptr<Workbook> WorkbookFactory::create(
 
 ```cpp
 struct OpenOptions {
-    bool strict_validation  {true};   // 形式違反で例外を投げる
-    bool preserve_formulas  {true};   // 数式文字列を保持する
-    bool preserve_styles    {true};   // フォーマット情報を保持する
-    bool fail_on_unsupported{false};  // 未対応機能で例外を投げる
+    bool            strict_validation{true};  // 形式違反で例外を投げる
+    bool            strict{false};            // true のとき ParseWarning を ParseError に昇格
+    WarningCallback on_warning;               // nullptr = 警告を stderr に出す
 };
+```
+
+### ParseWarning / WarningCallback
+
+```cpp
+struct ParseWarning {
+    enum class Kind { UnknownXmlElement, UnsupportedRecord, DataDropped, MalformedField };
+    Kind        kind;
+    std::string location;  // 例: "xl/worksheets/sheet1.xml row 42"
+    std::string message;
+};
+using WarningCallback = std::function<void(const ParseWarning&)>;
 ```
 
 ---
@@ -73,8 +84,8 @@ std::vector<uint8_t> wb.to_bytes(FileFormat fmt, const SaveOptions& opts = {});
 
 ```cpp
 struct SaveOptions {
-    FileFormat format    {FileFormat::Auto}; // Auto = 元の形式を維持
-    bool       recalculate{false};
+    FileFormat format{FileFormat::Auto}; // Auto = 元の形式を維持
+    // XLS 形式を指定すると WriteError が発生する
 };
 ```
 

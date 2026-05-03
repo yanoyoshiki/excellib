@@ -6,6 +6,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <iostream>
 
 namespace excellib::xlsx {
 
@@ -111,16 +112,24 @@ public:
     std::optional<Cell> try_cell(uint32_t row, uint32_t col) const override;
 
     std::vector<Cell> row(uint32_t row_idx) const override;
+    std::vector<Cell> col(uint32_t col_idx) const override;
     std::vector<Cell> cells() const override;
 
     void set_cell(uint32_t row, uint32_t col, const CellValue& value) override;
     void set_cell(const std::string& a1, const CellValue& value) override;
     void set_formula(const std::string& a1, const std::string& formula) override;
+    void set_row(uint32_t row_idx, const std::vector<CellValue>& values) override;
+
+    void merge  (const CellRange& range) override;
+    void unmerge(const CellRange& range) override;
+    std::vector<CellRange> merged_ranges() const override;
 
     void for_each_cell(std::function<void(const Cell&)> fn) const override;
 
     void put_cell(const Cell& c);
     void set_dimensions(uint32_t rows, uint32_t cols);
+
+    std::vector<CellRange> merges_;
 
 private:
     std::string name_;
@@ -152,6 +161,9 @@ public:
 
     void add_parsed_sheet(std::unique_ptr<XlsxSheet> sheet);
 
+    std::map<std::string, std::vector<uint8_t>> passthrough_entries_;
+    std::string original_styles_xml_;
+
 private:
     std::vector<std::unique_ptr<XlsxSheet>> sheets_;
     XlsxSharedStrings                        sst_;
@@ -166,6 +178,15 @@ public:
     explicit XlsxParser(const OpenOptions& opts) : opts_(opts) {}
 
     std::unique_ptr<XlsxWorkbook> parse(const std::vector<uint8_t>& data);
+
+    void warn(ParseWarning::Kind kind, const std::string& location, const std::string& msg) const {
+        ParseWarning w{kind, location, msg};
+        if (opts_.on_warning) {
+            opts_.on_warning(w);
+        } else {
+            std::cerr << "[excellib warning] " << location << ": " << msg << "\n";
+        }
+    }
 
 private:
     OpenOptions opts_;

@@ -175,9 +175,10 @@ auto bytes = wb->to_bytes(FileFormat::XLSX);
 PageSetup ps;
 ps.paper_size   = PaperSize::A4;
 ps.orientation  = Orientation::Landscape;
-ps.fit_to       = FitTo::Width{1};          // 横1ページに収める
-ps.print_area   = PrintArea::from_range("A1", "H50");
-ps.repeat_rows  = {0, 0};                   // 1行目を全ページで繰り返す
+ps.fit_to       = FitTo::Width;             // 横1ページに収める
+ps.fit_to_pages_wide = 1;
+ps.print_area   = PrintArea::from_range("A1:H50");
+RepeatTitles rt; rt.row_start = 0; rt.row_end = 0; ps.repeat_titles = rt;  // 1行目を全ページで繰り返す
 ps.margins      = {0.5, 0.5, 0.7, 0.7};    // 左右上下インチ
 
 ExcelPrinter printer;
@@ -275,14 +276,14 @@ Excel を使わず ZIP/XML を直接書き換える。
 ## よくある落とし穴
 
 ```cpp
-// NG: 文字列リテラルは自動で std::string にならない
-sh.set_cell("A1", "テキスト");            // コンパイルエラー
-// OK:
+// OK: 文字列リテラルはそのまま使える（const char* overload）
+sh.set_cell("A1", "テキスト");
+// OK: std::string でも可
 sh.set_cell("A1", std::string{"テキスト"});
 
-// NG: XLS は書き込み不可
+// NG: XLS は書き込み不可（WriteError が発生する）
 auto wb = WorkbookFactory::open("data.xls");
-wb->save("out.xls");                      // 実行時エラー
+wb->save("out.xls");                      // WriteError: XLS write is not supported
 
 // NG: CellAddress は 0-based、A1 記法と混同しやすい
 sh.cell(CellAddress{0, 0});  // A1
@@ -290,6 +291,10 @@ sh.cell(CellAddress{1, 1});  // B2
 
 // 注意: 印刷機能は Windows + Excel インストール必須
 // macOS/Linux で ExcelPrinter を使うとコンパイルは通るが実行時エラー
+
+// 注意: XLS の Cell::formula は常に std::nullopt（キャッシュ値のみ取得可能）
+auto c = xls_sheet.cell("A1");
+c.has_formula();  // 常に false（XLS 数式文字列は取得不可）
 ```
 
 ---
