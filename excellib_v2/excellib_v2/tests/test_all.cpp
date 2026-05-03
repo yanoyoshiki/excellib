@@ -667,7 +667,7 @@ void test_deflate() {
         auto s = reinterpret_cast<const uint8_t*>("excellib test");
         EXPECT_EQ(excellib::detail::crc32_compute(s, 13), 0x9EED09FFu);
     });
-    RUN("CRC32 空データ = 0x00000000", {
+    RUN("CRC32 empty data = 0x00000000", {
         EXPECT_EQ(excellib::detail::crc32_compute(nullptr, 0), 0x00000000u);
     });
 
@@ -738,14 +738,14 @@ void test_deflate() {
     });
 
     // ── エラーケース ──────────────────────────────────────
-    RUN("空データで例外", {
+    RUN("empty data throws", {
         std::vector<uint8_t> empty;
         bool threw = false;
         try { excellib::detail::deflate_decompress(empty.data(), 0); }
         catch (std::exception&) { threw = true; }
         EXPECT(threw);
     });
-    RUN("btype=3 (予約済み) で例外", {
+    RUN("btype=3 (reserved) throws", {
         // BFINAL=1 BTYPE=11 → 0b00000111 = 0x07
         std::vector<uint8_t> bad = {0x07};
         bool threw = false;
