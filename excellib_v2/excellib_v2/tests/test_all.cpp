@@ -8,6 +8,7 @@
 #include <sstream>
 #include <fstream>
 #include <cmath>
+#include <algorithm>
 
 using namespace excellib;
 
