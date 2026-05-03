@@ -14,6 +14,11 @@ else()
     add_compile_options(-Wall -Wextra -Wno-trigraphs -Wno-unused-parameter)
 endif()
 
+# MinGW: ランタイム DLL なしで動くスタンドアロン exe を生成する
+if(MINGW)
+    add_link_options(-static -static-libgcc -static-libstdc++)
+endif()
+
 # ============================================================
 #  ライブラリ本体 (外部依存なし)
 # ============================================================

@@ -849,9 +849,9 @@ void test_new_features() {
 //  Main
 // ============================================================
 int main() {
-    std::cout<<"╔══════════════════════════════════════════╗\n";
-    std::cout<<"║    excellib v2 — Full Test Suite         ║\n";
-    std::cout<<"╚══════════════════════════════════════════╝\n";
+    std::cout<<"==========================================\n";
+    std::cout<<"    excellib v2 - Full Test Suite         \n";
+    std::cout<<"==========================================\n";
 
     test_cell_address();
     test_cell_value();
@@ -866,8 +866,8 @@ int main() {
     test_deflate();
     test_new_features();
 
-    std::cout<<"\n╔══════════════════════════════════════════╗\n";
-    std::cout<<"║  Results: "<<g_pass<<" passed  "<<g_fail<<" failed  "<<g_skip<<" skipped        ║\n";
-    std::cout<<"╚══════════════════════════════════════════╝\n";
+    std::cout<<"\n==========================================\n";
+    std::cout<<"  Results: "<<g_pass<<" passed  "<<g_fail<<" failed  "<<g_skip<<" skipped\n";
+    std::cout<<"==========================================\n";
     return g_fail==0 ? 0 : 1;
 }
