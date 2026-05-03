@@ -10,6 +10,10 @@
 #include <cmath>
 #include <algorithm>
 #include <filesystem>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 // クロスプラットフォームの一時ディレクトリパスを取得するヘルパー
 static std::string tmp(const std::string& name) {
@@ -667,7 +671,7 @@ void test_deflate() {
         auto s = reinterpret_cast<const uint8_t*>("excellib test");
         EXPECT_EQ(excellib::detail::crc32_compute(s, 13), 0x9EED09FFu);
     });
-    RUN("CRC32 empty data = 0x00000000", {
+    RUN("CRC32 空データ = 0x00000000", {
         EXPECT_EQ(excellib::detail::crc32_compute(nullptr, 0), 0x00000000u);
     });
 
@@ -738,14 +742,14 @@ void test_deflate() {
     });
 
     // ── エラーケース ──────────────────────────────────────
-    RUN("empty data throws", {
+    RUN("空データで例外", {
         std::vector<uint8_t> empty;
         bool threw = false;
         try { excellib::detail::deflate_decompress(empty.data(), 0); }
         catch (std::exception&) { threw = true; }
         EXPECT(threw);
     });
-    RUN("btype=3 (reserved) throws", {
+    RUN("btype=3 (予約済み) で例外", {
         // BFINAL=1 BTYPE=11 → 0b00000111 = 0x07
         std::vector<uint8_t> bad = {0x07};
         bool threw = false;
@@ -849,6 +853,9 @@ void test_new_features() {
 //  Main
 // ============================================================
 int main() {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     std::cout<<"==========================================\n";
     std::cout<<"    excellib v2 - Full Test Suite         \n";
     std::cout<<"==========================================\n";
