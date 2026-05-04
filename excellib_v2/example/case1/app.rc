@@ -1,0 +1,4 @@
+#include <windows.h>
+
+// Visual styles + DPI awareness manifest
+1 RT_MANIFEST "app.manifest"
