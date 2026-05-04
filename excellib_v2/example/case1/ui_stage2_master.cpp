@@ -35,12 +35,14 @@ public:
     }
 
     void on_show() override {
-        // Stage 1 で確定したパスベースをここで解決して表示
         std::string base = Workflow::construct_path_base(app_.state().input_string);
         std::wstring p = theme::to_wide(base);
         SetWindowTextW(path_, (L"  " + p + L"  (.xlsx → .xls)").c_str());
-        if (!app_.state().resolved_path.empty()) {
-            // 既に読み込み済みなら結果を再表示する想定
+
+        // Stage 1 が変わっていたら、表示中のレコードはもう古い → 自動リセット
+        if (app_.state().input_gen != seen_input_gen_) {
+            reset();
+            seen_input_gen_ = app_.state().input_gen;
         }
     }
 
@@ -135,6 +137,7 @@ private:
                 return;
             }
             app_.state().records = std::move(records);
+            ++app_.state().records_gen;
             populate_list();
 
             wchar_t buf[128];
@@ -202,6 +205,7 @@ private:
     HWND title_{}, path_lbl_{}, path_{}, load_btn_{}, banner_{}, list_{}, summary_{};
     int  banner_kind_{0};   // 0 = ok / 1 = error
     bool banner_visible_{false};
+    uint32_t seen_input_gen_{0};
 };
 
 }  // namespace

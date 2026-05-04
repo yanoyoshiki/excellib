@@ -48,6 +48,12 @@ public:
     }
 
     void on_show() override {
+        // Stage 2 の records が更新されていたら一覧を作り直す
+        if (app_.state().records_gen != seen_records_gen_) {
+            seen_records_gen_ = app_.state().records_gen;
+            // 全部チェックの初期状態に戻す
+            for (auto& r : app_.state().records) r.included = true;
+        }
         repopulate();
         update_summary();
     }
@@ -105,12 +111,10 @@ public:
     }
 
     bool commit() override {
-        // チェック状態を records に反映
         size_t n = app_.state().records.size();
         for (size_t i = 0; i < n; ++i) {
             app_.state().records[i].included =
                 ListView_GetCheckState(list_, (int)i) != 0;
-            // 印刷列範囲 (編集された値) を読み戻す
             wchar_t buf[64]{};
             ListView_GetItemText(list_, (int)i, 3, buf, 64);
             std::string val = theme::to_utf8(buf);
@@ -119,6 +123,7 @@ public:
         }
         bool landscape = SendMessageW(landscape_, BM_GETCHECK, 0, 0) == BST_CHECKED;
         app_.state().jobs = Workflow::records_to_jobs(app_.state().records, landscape);
+        ++app_.state().jobs_gen;
         return !app_.state().jobs.empty();
     }
 
@@ -188,131 +193,145 @@ private:
         wchar_t cur[64]{};
         ListView_GetItemText(list_, sel, 3, cur, 64);
 
-        // 簡易ダイアログ: InputBox 風
         std::wstring v(cur);
         if (v == L"(全列)") v.clear();
 
-        // 自前ダイアログ生成
-        InputDialogState st{ app_.hwnd(), L"列範囲を入力", L"例: A:D / 空欄なら全列",
-                              v };
-        if (show_input_dialog(st)) {
-            std::wstring out = st.value;
+        std::wstring out;
+        if (run_edit_popup(L"列範囲を入力 (例: A:D / 空欄なら全列)", v, out)) {
             if (out.empty()) out = L"(全列)";
             ListView_SetItemText(list_, sel, 3, (LPWSTR)out.c_str());
         }
     }
 
-    // -------- ミニ入力ダイアログ --------
-    struct InputDialogState {
-        HWND parent; const wchar_t* title; const wchar_t* prompt;
-        std::wstring value;
+    // -------- 自前のミニ入力ポップアップ --------
+    // モーダルな小窓を 1 つ作って、OK / Cancel / Enter / Esc を受ける。
+    // DLGTEMPLATE を手組みする代わりに普通の WS_POPUP ウィンドウ。
+    static constexpr int IDOK_BTN     = 0x7001;
+    static constexpr int IDCANCEL_BTN = 0x7002;
+    static constexpr int ID_EDIT_FLD  = 0x7003;
+
+    struct EditPopupCtx {
+        std::wstring* out{};
+        bool          accepted{false};
     };
 
-    static INT_PTR CALLBACK input_dlg_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
-        InputDialogState* st = nullptr;
-        if (m == WM_INITDIALOG) {
-            st = (InputDialogState*)l;
-            SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)st);
-            SetWindowTextW(h, st->title);
-            SetDlgItemTextW(h, 1001, st->prompt);
-            SetDlgItemTextW(h, 1002, st->value.c_str());
-            SetFocus(GetDlgItem(h, 1002));
-            return FALSE;
-        }
-        st = (InputDialogState*)GetWindowLongPtrW(h, GWLP_USERDATA);
-        if (m == WM_COMMAND) {
-            int id = LOWORD(w);
-            if (id == IDOK) {
-                wchar_t buf[256]{};
-                GetDlgItemTextW(h, 1002, buf, 256);
-                if (st) st->value = buf;
-                EndDialog(h, IDOK);
+    static LRESULT CALLBACK popup_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+        auto* ctx = reinterpret_cast<EditPopupCtx*>(GetWindowLongPtrW(h, GWLP_USERDATA));
+        switch (m) {
+            case WM_NCCREATE: {
+                auto cs = (CREATESTRUCTW*)l;
+                SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
                 return TRUE;
             }
-            if (id == IDCANCEL) { EndDialog(h, IDCANCEL); return TRUE; }
+            case WM_CLOSE: DestroyWindow(h); return 0;
+            case WM_COMMAND: {
+                int id = LOWORD(w);
+                if (id == IDOK_BTN || id == IDCANCEL_BTN) {
+                    if (id == IDOK_BTN && ctx) {
+                        wchar_t buf[256]{};
+                        GetDlgItemTextW(h, ID_EDIT_FLD, buf, 256);
+                        *ctx->out = buf;
+                        ctx->accepted = true;
+                    }
+                    DestroyWindow(h);
+                }
+                return 0;
+            }
         }
-        return FALSE;
+        return DefWindowProcW(h, m, w, l);
     }
 
-    bool show_input_dialog(InputDialogState& st) {
-        // メモリ上に DLGTEMPLATE を構築
-        struct DlgItem {
-            DLGITEMTEMPLATE t;
-            // 続き: クラス/タイトル/データを WORD 配列で
-        };
-        // 簡易版: リソース不要なダイアログを動的生成
-        // -- WORD 配列で組み立て --
-        std::vector<WORD> tpl;
-        auto push_w = [&](WORD v){ tpl.push_back(v); };
-        auto push_dw = [&](DWORD v){ tpl.push_back(LOWORD(v)); tpl.push_back(HIWORD(v)); };
-        auto push_str = [&](const wchar_t* s){
-            for (; *s; ++s) tpl.push_back((WORD)*s);
-            tpl.push_back(0);
-        };
-        auto align_dw = [&](){
-            while (tpl.size() % 2) tpl.push_back(0);
-        };
+    bool run_edit_popup(const wchar_t* prompt, const std::wstring& initial,
+                         std::wstring& out) {
+        out = initial;
+        EditPopupCtx ctx{ &out, false };
 
-        // DLGTEMPLATE
-        push_dw(DS_SETFONT|DS_CENTER|WS_POPUP|WS_CAPTION|WS_SYSMENU);  // style
-        push_dw(0); // dwExtendedStyle
-        push_w(4);  // 4 controls
-        push_w(0); push_w(0); // x,y
-        push_w(220); push_w(80); // cx,cy
-        push_w(0); // menu
-        push_w(0); // class
-        push_str(L""); // title
-        push_w(9); push_str(L"Segoe UI"); // font
+        static bool reg = false;
+        const wchar_t* cls = L"Case1EditPopup";
+        if (!reg) {
+            WNDCLASSW wc{};
+            wc.lpfnWndProc   = popup_proc;
+            wc.hInstance     = app_.hinst();
+            wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
+            wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+            wc.lpszClassName = cls;
+            RegisterClassW(&wc);
+            reg = true;
+        }
 
-        // 1. STATIC prompt
-        align_dw();
-        push_dw(WS_CHILD|WS_VISIBLE|SS_LEFT);
-        push_dw(0);
-        push_w(8); push_w(8); push_w(204); push_w(20);
-        push_w(1001);
-        push_w(0xFFFF); push_w(0x0082); // STATIC class
-        push_str(L"");
-        push_w(0);
+        // 親ウィンドウの中央に配置
+        RECT pr; GetWindowRect(app_.hwnd(), &pr);
+        int W = theme::scale(420, app_.dpi());
+        int H = theme::scale(150, app_.dpi());
+        int x = pr.left + ((pr.right - pr.left) - W) / 2;
+        int y = pr.top  + ((pr.bottom - pr.top) - H) / 2;
 
-        // 2. EDIT input
-        align_dw();
-        push_dw(WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_BORDER|ES_AUTOHSCROLL);
-        push_dw(0);
-        push_w(8); push_w(30); push_w(204); push_w(14);
-        push_w(1002);
-        push_w(0xFFFF); push_w(0x0081); // EDIT class
-        push_str(L"");
-        push_w(0);
+        HWND popup = CreateWindowExW(WS_EX_DLGMODALFRAME|WS_EX_TOPMOST,
+            cls, L"列範囲の編集",
+            WS_POPUP|WS_CAPTION|WS_SYSMENU,
+            x, y, W, H, app_.hwnd(), nullptr, app_.hinst(), &ctx);
+        if (!popup) return false;
 
-        // 3. OK button
-        align_dw();
-        push_dw(WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON);
-        push_dw(0);
-        push_w(108); push_w(54); push_w(50); push_w(18);
-        push_w(IDOK);
-        push_w(0xFFFF); push_w(0x0080); // BUTTON class
-        push_str(L"OK");
-        push_w(0);
+        int pad = theme::scale(12, app_.dpi());
+        int line = theme::scale(28, app_.dpi());
+        HWND lbl = CreateWindowExW(0, L"STATIC", prompt,
+            WS_CHILD|WS_VISIBLE|SS_LEFT,
+            pad, pad, W - pad*2, line, popup, nullptr, app_.hinst(), nullptr);
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)app_.fonts().body, TRUE);
 
-        // 4. Cancel button
-        align_dw();
-        push_dw(WS_CHILD|WS_VISIBLE|WS_TABSTOP);
-        push_dw(0);
-        push_w(162); push_w(54); push_w(50); push_w(18);
-        push_w(IDCANCEL);
-        push_w(0xFFFF); push_w(0x0080);
-        push_str(L"キャンセル");
-        push_w(0);
+        HWND ed = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", initial.c_str(),
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
+            pad, pad + line + 4, W - pad*2, theme::scale(28, app_.dpi()),
+            popup, (HMENU)(intptr_t)ID_EDIT_FLD, app_.hinst(), nullptr);
+        SendMessageW(ed, WM_SETFONT, (WPARAM)app_.fonts().large_input, TRUE);
 
-        INT_PTR r = DialogBoxIndirectParamW(GetModuleHandleW(nullptr),
-            (LPCDLGTEMPLATE)tpl.data(), st.parent, input_dlg_proc,
-            (LPARAM)&st);
-        return r == IDOK;
+        int by = pad + line + 4 + theme::scale(34, app_.dpi());
+        int bw = theme::scale(96, app_.dpi());
+        int bh = theme::scale(32, app_.dpi());
+        HWND ok = CreateWindowExW(0, L"BUTTON", L"OK",
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
+            W - pad - bw*2 - 8, by, bw, bh, popup,
+            (HMENU)(intptr_t)IDOK_BTN, app_.hinst(), nullptr);
+        SendMessageW(ok, WM_SETFONT, (WPARAM)app_.fonts().body, TRUE);
+        HWND cn = CreateWindowExW(0, L"BUTTON", L"キャンセル",
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+            W - pad - bw, by, bw, bh, popup,
+            (HMENU)(intptr_t)IDCANCEL_BTN, app_.hinst(), nullptr);
+        SendMessageW(cn, WM_SETFONT, (WPARAM)app_.fonts().body, TRUE);
+
+        EnableWindow(app_.hwnd(), FALSE);
+        ShowWindow(popup, SW_SHOW);
+        SetFocus(ed);
+        SendMessageW(ed, EM_SETSEL, 0, -1);
+
+        // モーダルループ
+        MSG msg;
+        while (IsWindow(popup) && GetMessageW(&msg, nullptr, 0, 0)) {
+            // Enter/Esc を OK/Cancel に変換
+            if (msg.message == WM_KEYDOWN && IsChild(popup, msg.hwnd)) {
+                if (msg.wParam == VK_RETURN) {
+                    SendMessageW(popup, WM_COMMAND, MAKEWPARAM(IDOK_BTN, BN_CLICKED), 0);
+                    continue;
+                }
+                if (msg.wParam == VK_ESCAPE) {
+                    SendMessageW(popup, WM_COMMAND, MAKEWPARAM(IDCANCEL_BTN, BN_CLICKED), 0);
+                    continue;
+                }
+            }
+            if (!IsDialogMessageW(popup, &msg)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        EnableWindow(app_.hwnd(), TRUE);
+        SetForegroundWindow(app_.hwnd());
+        return ctx.accepted;
     }
 
     HWND title_{}, desc_{};
     HWND select_all_{}, deselect_all_{}, landscape_{};
     HWND list_{}, summary_{};
+    uint32_t seen_records_gen_{0};
 };
 
 }  // namespace

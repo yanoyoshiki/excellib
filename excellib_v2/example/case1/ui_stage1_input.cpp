@@ -145,11 +145,18 @@ public:
 
     bool commit() override {
         auto& s = app_.state();
-        s.input_string    = current_input();
-        s.output_mode     = current_mode();
-        s.output_dir      = current_text(out_dir_);
-        s.output_pdf_path = current_text(out_pdf_);
-        // ベースパスは Stage Master でファイル解決する
+        std::string in    = current_input();
+        OutputMode  mode  = current_mode();
+        std::string odir  = current_text(out_dir_);
+        std::string opdf  = current_text(out_pdf_);
+        // 内容が変化していれば世代カウンタを進めて後段の自動リセットを誘発
+        bool changed = (in != s.input_string) || (mode != s.output_mode)
+                    || (odir != s.output_dir) || (opdf != s.output_pdf_path);
+        if (changed) ++s.input_gen;
+        s.input_string    = std::move(in);
+        s.output_mode     = mode;
+        s.output_dir      = std::move(odir);
+        s.output_pdf_path = std::move(opdf);
         return true;
     }
 

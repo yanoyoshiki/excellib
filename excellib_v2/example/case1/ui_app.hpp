@@ -61,6 +61,12 @@ struct AppState {
     std::vector<excellib::PrintJob>    jobs;
     std::optional<excellib::BatchResult> last_result;
 
+    // 世代カウンタ — Stage N の commit で N+1 を bump し、
+    // 後段は記憶した世代と比較して入力変化を検出する。
+    uint32_t input_gen{0};       ///< Stage 1 commit で +1
+    uint32_t records_gen{0};     ///< Stage 2 (load_master 成功) で +1
+    uint32_t jobs_gen{0};        ///< Stage 3 commit で +1
+
     // ステージステータス
     StageStatus status[STAGE_COUNT]{
         StageStatus::Active,  StageStatus::Pending,
@@ -152,7 +158,6 @@ private:
     HWND nav_back_{};
     HWND nav_redo_{};
     HWND nav_next_{};
-    HWND status_bar_{};      // 下端の細いステータスバナー
 
     std::unique_ptr<StagePanel> panels_[STAGE_COUNT];
     Stage current_{Stage::Input};

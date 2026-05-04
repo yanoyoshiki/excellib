@@ -203,14 +203,13 @@ LRESULT MainWindow::wndproc(UINT m, WPARAM w, LPARAM l) {
         }
         case WM_DRAWITEM: {
             auto* dis = reinterpret_cast<LPDRAWITEMSTRUCT>(l);
+            // 1) kind は window prop から (make_button が SetProp で格納)
             theme::BtnKind kind = theme::BtnKind::Primary;
-            const wchar_t* text = L"";
-            if (dis->CtrlID == ID_NAV_BACK) { kind = theme::BtnKind::Neutral; text = L"◀ 戻る"; }
-            else if (dis->CtrlID == ID_NAV_REDO) { kind = theme::BtnKind::Warning; text = L"↻ このステージをやり直す"; }
-            else if (dis->CtrlID == ID_NAV_NEXT) {
-                kind = (current_ == Stage::Run) ? theme::BtnKind::Success : theme::BtnKind::Primary;
-                text = (current_ == Stage::Run) ? L"閉じる" : L"進む ▶";
-            }
+            HANDLE p = GetPropW(dis->hwndItem, L"case1.btn.kind");
+            if (p) kind = (theme::BtnKind)((intptr_t)p - 1);
+            // 2) text は実際のボタンタイトルから
+            wchar_t text[256] = L"";
+            GetWindowTextW(dis->hwndItem, text, 256);
             theme::draw_owner_button(dis, kind, text, fonts_.heading);
             return TRUE;
         }
@@ -322,24 +321,40 @@ void MainWindow::create_stage_panels() {
     panels_[(int)Stage::Run   ] = make_stage_run   (*this);
 }
 
+static void make_nav_btn(HWND parent, HWND& out, int id, theme::BtnKind kind,
+                          const wchar_t* text, HINSTANCE inst) {
+    out = CreateWindowExW(0, L"BUTTON", text,
+        WS_CHILD|WS_VISIBLE|BS_OWNERDRAW,
+        0,0,100,40, parent, (HMENU)(intptr_t)id, inst, nullptr);
+    SetPropW(out, L"case1.btn.kind", (HANDLE)(intptr_t)((int)kind + 1));
+}
+
 void MainWindow::create_nav_buttons() {
-    nav_back_ = CreateWindowExW(0, L"BUTTON", L"",
-        WS_CHILD|WS_VISIBLE|BS_OWNERDRAW,
-        0,0,100,40, hwnd_, (HMENU)(intptr_t)ID_NAV_BACK, hInst_, nullptr);
-    nav_redo_ = CreateWindowExW(0, L"BUTTON", L"",
-        WS_CHILD|WS_VISIBLE|BS_OWNERDRAW,
-        0,0,100,40, hwnd_, (HMENU)(intptr_t)ID_NAV_REDO, hInst_, nullptr);
-    nav_next_ = CreateWindowExW(0, L"BUTTON", L"",
-        WS_CHILD|WS_VISIBLE|BS_OWNERDRAW,
-        0,0,100,40, hwnd_, (HMENU)(intptr_t)ID_NAV_NEXT, hInst_, nullptr);
+    make_nav_btn(hwnd_, nav_back_, ID_NAV_BACK, theme::BtnKind::Neutral,
+                 L"◀ 戻る", hInst_);
+    make_nav_btn(hwnd_, nav_redo_, ID_NAV_REDO, theme::BtnKind::Warning,
+                 L"↻ このステージをやり直す", hInst_);
+    make_nav_btn(hwnd_, nav_next_, ID_NAV_NEXT, theme::BtnKind::Primary,
+                 L"進む ▶", hInst_);
     update_nav_buttons();
 }
 
 void MainWindow::update_nav_buttons() {
     EnableWindow(nav_back_, current_ != Stage::Input);
     EnableWindow(nav_redo_, current_ != Stage::Input);
-    bool can_advance = panels_[(int)current_]->can_advance();
+    bool can_advance = panels_[(int)current_] && panels_[(int)current_]->can_advance();
     EnableWindow(nav_next_, can_advance);
+
+    // ステージ4 では NEXT を「閉じる」(Success) に切り替える
+    if (current_ == Stage::Run) {
+        SetWindowTextW(nav_next_, L"閉じる");
+        SetPropW(nav_next_, L"case1.btn.kind",
+                 (HANDLE)(intptr_t)((int)theme::BtnKind::Success + 1));
+    } else {
+        SetWindowTextW(nav_next_, L"進む ▶");
+        SetPropW(nav_next_, L"case1.btn.kind",
+                 (HANDLE)(intptr_t)((int)theme::BtnKind::Primary + 1));
+    }
     InvalidateRect(nav_back_, nullptr, TRUE);
     InvalidateRect(nav_redo_, nullptr, TRUE);
     InvalidateRect(nav_next_, nullptr, TRUE);
@@ -394,7 +409,16 @@ void MainWindow::show_stage(Stage s) {
         ShowWindow(panels_[(int)current_]->hwnd(), SW_HIDE);
     }
     current_ = s;
-    state_.status[(int)s] = StageStatus::Active;
+    // 「現在地」は常に Active。それより前の Active は Done として残す
+    // (commit 経由で Done にしたものはそのまま、未確定で前進した場合の表示安定化)。
+    for (int i = 0; i < STAGE_COUNT; ++i) {
+        if (i == (int)s) {
+            state_.status[i] = StageStatus::Active;
+        } else if (state_.status[i] == StageStatus::Active) {
+            // 別の Active が残っていたら、現在地より前なら Done、後なら Pending
+            state_.status[i] = (i < (int)s) ? StageStatus::Done : StageStatus::Pending;
+        }
+    }
     if (panels_[(int)s]) {
         ShowWindow(panels_[(int)s]->hwnd(), SW_SHOW);
         panels_[(int)s]->on_show();

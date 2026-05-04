@@ -25,6 +25,7 @@ set(CASE1_SOURCES
     workflow.cpp
     ui_theme.cpp
     ui_app.cpp
+    ui_stages.cpp
     ui_stage1_input.cpp
     ui_stage2_master.cpp
     ui_stage3_jobs.cpp

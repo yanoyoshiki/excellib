@@ -57,8 +57,25 @@ public:
         EnableWindow(cancel_btn_, FALSE);
     }
 
+    ~StageRun() override {
+        // 実行中ならキャンセルを要求して join する。
+        // 未 join のままウィンドウが破棄されると WM_APP_BATCH_DONE の
+        // PostMessage 先が無効ハンドルになり UB になる。
+        if (worker_.joinable()) {
+            app_.state().workflow.request_cancel();
+            worker_.join();
+        }
+    }
+
     void on_show() override {
-        // ジョブ件数の表示
+        // jobs が変わっていたら結果表示をクリア (前回の結果は古い)
+        if (app_.state().jobs_gen != seen_jobs_gen_) {
+            seen_jobs_gen_ = app_.state().jobs_gen;
+            ListView_DeleteAllItems(result_list_);
+            SendMessageW(log_, LB_RESETCONTENT, 0, 0);
+            app_.state().last_result.reset();
+            show_result_controls(false);
+        }
         wchar_t buf[128];
         swprintf(buf, 128, L"  実行待ち:  %zu 件のジョブ",
                  app_.state().jobs.size());
@@ -198,13 +215,15 @@ private:
             PostMessageW(hwnd, WM_APP_LOG, 0, (LPARAM)lg);
         };
 
+        // 既に走っているスレッドが join 待ち状態 (再実行) なら片付ける
+        if (worker_.joinable()) worker_.join();
+
         worker_ = std::thread([this, hwnd, jobs_copy, ctx]() mutable {
             auto r = std::make_unique<excellib::BatchResult>(
                 app_.state().workflow.run_batch(jobs_copy, ctx));
-            // BatchResult を heap で送る
             PostMessageW(hwnd, WM_APP_BATCH_DONE, 0, (LPARAM)r.release());
         });
-        worker_.detach();
+        // detach せず join 可能なまま保持 (DTOR or 再実行で安全に処理)
     }
 
     void on_batch_done(const excellib::BatchResult& r) {
@@ -281,6 +300,7 @@ private:
     HWND run_btn_{}, cancel_btn_{}, retry_btn_{}, restart_btn_{};
     HWND progress_{}, current_label_{}, summary_{};
     HWND log_{}, result_list_{};
+    uint32_t seen_jobs_gen_{0};
 
     std::thread worker_;
 };
