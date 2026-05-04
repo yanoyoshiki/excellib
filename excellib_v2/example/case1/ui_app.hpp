@@ -135,7 +135,6 @@ private:
 
     void on_create();
     void on_size(int w, int h);
-    void on_paint();
     void on_command(int id, HWND ctrl);
 
     void create_step_bar();

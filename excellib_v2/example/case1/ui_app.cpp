@@ -57,19 +57,20 @@ static LRESULT CALLBACK stepbar_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_ERASEBKGND: return 1;
         case WM_LBUTTONDOWN: {
             if (!d || !d->app) break;
-            // クリックしたステップへジャンプ（任意の段に戻れるように）
             RECT rc; GetClientRect(h, &rc);
             int x = LOWORD(l);
             int seg = (rc.right - rc.left) / STAGE_COUNT;
             int idx = x / seg;
-            if (idx >= 0 && idx < STAGE_COUNT) {
-                // 後段へは「進む」が押されない限り行けない方が安全だが、
-                // 「段階的やり直し」のため、Done になっている段までは戻れる仕様。
-                Stage target = (Stage)idx;
-                Stage cur = d->app->current_stage();
-                if ((int)target <= (int)cur)
-                    d->app->show_stage(target);
-            }
+            if (idx < 0 || idx >= STAGE_COUNT) return 0;
+
+            // ジャンプ可否: 現在地は何もしない / 既に Done のステージは双方向 OK /
+            // それ以外 (Pending) は「進む」を強制
+            Stage target = (Stage)idx;
+            Stage cur    = d->app->current_stage();
+            if (target == cur) return 0;
+            StageStatus st = d->app->state().status[idx];
+            if ((int)target < (int)cur || st == StageStatus::Done || st == StageStatus::Error)
+                d->app->show_stage(target);
             return 0;
         }
         case WM_PAINT: {
@@ -237,8 +238,11 @@ LRESULT MainWindow::wndproc(UINT m, WPARAM w, LPARAM l) {
         case WM_APP_PROGRESS:
         case WM_APP_BATCH_DONE:
         case WM_APP_LOG:
-            if (panels_[(int)current_])
-                panels_[(int)current_]->on_app_message(m, w, l);
+            // 進捗・結果メッセージは常に Run ステージへ。
+            // 現在ステージにルートすると、ユーザーがステップバーで別ステージへ
+            // 移動した際に heap allocate したペイロードがリークする。
+            if (panels_[(int)Stage::Run])
+                panels_[(int)Stage::Run]->on_app_message(m, w, l);
             return 0;
         case WM_DPICHANGED: {
             dpi_ = HIWORD(w);

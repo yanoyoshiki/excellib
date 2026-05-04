@@ -4,6 +4,16 @@
 namespace case1::ui {
 
 LRESULT CALLBACK PanelBase::panel_forward_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    // パネル領域だけが Invalidate された場合に背景が塗られず
+    // 古い pixel が残るのを防ぐため自分で塗る
+    if (m == WM_ERASEBKGND) {
+        HDC dc = (HDC)w;
+        RECT rc; GetClientRect(h, &rc);
+        HBRUSH br = CreateSolidBrush(theme::BgWindow);
+        FillRect(dc, &rc, br);
+        DeleteObject(br);
+        return 1;
+    }
     // 子コントロールからの通知を MainWindow (=GetParent) に転送
     switch (m) {
         case WM_COMMAND:
@@ -76,12 +86,12 @@ HWND PanelBase::make_button(int id, theme::BtnKind kind, const wchar_t* text) {
     return h;
 }
 
-HWND PanelBase::make_listview(int extra_styles) {
+HWND PanelBase::make_listview(DWORD extended_extras) {
     HWND h = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
-        WS_CHILD|WS_VISIBLE|WS_TABSTOP|LVS_REPORT|LVS_SHOWSELALWAYS|extra_styles,
+        WS_CHILD|WS_VISIBLE|WS_TABSTOP|LVS_REPORT|LVS_SHOWSELALWAYS,
         0,0,200,200, panel_, nullptr, app_.hinst(), nullptr);
     ListView_SetExtendedListViewStyle(h,
-        LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER);
+        LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER|extended_extras);
     SendMessageW(h, WM_SETFONT, (WPARAM)app_.fonts().body, TRUE);
     return h;
 }

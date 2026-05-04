@@ -42,8 +42,8 @@ protected:
     /// オーナー描画ボタン (kind を window prop に格納)
     HWND make_button(int id, theme::BtnKind kind, const wchar_t* text);
 
-    /// ListView (報告系)
-    HWND make_listview(int extra_styles = 0);
+    /// ListView (報告系) — extended_extras には LVS_EX_* を渡す
+    HWND make_listview(DWORD extended_extras = 0);
 
     /// 進捗バー
     HWND make_progress();

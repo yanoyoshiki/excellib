@@ -162,6 +162,24 @@ public:
 
     bool can_advance() const override { return true; }   // ステージ4 では Next = 閉じる
 
+    void reset() override {
+        // 実行中なら割り込まないように先にキャンセル + join
+        if (worker_.joinable()) {
+            app_.state().workflow.request_cancel();
+            worker_.join();
+        }
+        ListView_DeleteAllItems(result_list_);
+        SendMessageW(log_, LB_RESETCONTENT, 0, 0);
+        SendMessageW(progress_, PBM_SETPOS, 0, 0);
+        app_.state().last_result.reset();
+        app_.state().running.store(false);
+        SetWindowTextW(current_label_, L"");
+        on_show();   // サマリー再表示
+        EnableWindow(run_btn_, TRUE);
+        EnableWindow(cancel_btn_, FALSE);
+        show_result_controls(false);
+    }
+
 private:
     static LVCOLUMNW _col(const wchar_t* t, int w) {
         LVCOLUMNW c{}; c.mask = LVCF_TEXT|LVCF_WIDTH;
@@ -280,10 +298,9 @@ private:
 
     void retry_failed() {
         if (!app_.state().last_result) return;
-        // BatchPrinter::from_failures で失敗ジョブのみ取り出して再実行
-        auto retry = excellib::BatchPrinter::from_failures(*app_.state().last_result);
-        // BatchPrinter から元 PrintJob 一覧を抽出する手段がないため、
-        // last_result.jobs[].original_job からジョブ一覧を作り直す
+        // last_result から失敗/キャンセルジョブの original_job を抽出。
+        // (BatchPrinter::from_failures は新しい BatchPrinter を返すが、
+        //  Workflow::run_batch が自身の batch_ を再構築するためここでは使わない)
         std::vector<excellib::PrintJob> retry_jobs;
         for (auto& jr : app_.state().last_result->jobs)
             if (!jr.success) retry_jobs.push_back(jr.original_job);

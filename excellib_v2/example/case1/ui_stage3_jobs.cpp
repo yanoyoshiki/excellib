@@ -35,8 +35,6 @@ public:
         SendMessageW(landscape_, WM_SETFONT, (WPARAM)app_.fonts().heading, TRUE);
 
         list_ = make_listview(LVS_EX_CHECKBOXES);
-        ListView_SetExtendedListViewStyle(list_,
-            LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_DOUBLEBUFFER|LVS_EX_CHECKBOXES);
 
         ListView_InsertColumn(list_, 0, _col(L"#",       60));
         ListView_InsertColumn(list_, 1, _col(L"ファイル", 320));
