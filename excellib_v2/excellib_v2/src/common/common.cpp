@@ -117,6 +117,23 @@ std::string CellRange::to_a1() const {
 // ============================================================
 //  PrintArea
 // ============================================================
+static std::string col_idx_to_letters(uint32_t col) {
+    std::string r;
+    uint32_t c = col + 1;
+    while (c > 0) { --c; r += static_cast<char>('A' + c % 26); c /= 26; }
+    std::reverse(r.begin(), r.end());
+    return r;
+}
+
+static uint32_t col_letters_to_idx(const std::string& s) {
+    uint32_t col = 0;
+    for (char ch : s) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        col = col * 26 + static_cast<uint32_t>(ch - 'A' + 1);
+    }
+    return col - 1;
+}
+
 PrintArea PrintArea::from_range(const std::string& range) {
     auto colon = range.find(':');
     PrintArea pa;
@@ -135,7 +152,39 @@ PrintArea PrintArea::from_range(const std::string& range) {
     return pa;
 }
 
+PrintArea PrintArea::columns_only(std::string_view col_range) {
+    std::string s(col_range);
+    // strip any leading $ or whitespace
+    auto strip = [](const std::string& t) {
+        std::string r;
+        for (char c : t) if (std::isalpha(static_cast<unsigned char>(c))) r += c;
+        return r;
+    };
+    auto colon = s.find(':');
+    PrintArea pa;
+    pa.col_range_only = true;
+    if (colon == std::string::npos) {
+        pa.first_col = pa.last_col = col_letters_to_idx(strip(s));
+    } else {
+        pa.first_col = col_letters_to_idx(strip(s.substr(0, colon)));
+        pa.last_col  = col_letters_to_idx(strip(s.substr(colon + 1)));
+        if (pa.last_col < pa.first_col) std::swap(pa.first_col, pa.last_col);
+    }
+    return pa;
+}
+
+PrintArea PrintArea::columns_only(uint32_t col_start, uint32_t col_end) {
+    PrintArea pa;
+    pa.col_range_only = true;
+    pa.first_col = std::min(col_start, col_end);
+    pa.last_col  = std::max(col_start, col_end);
+    return pa;
+}
+
 std::string PrintArea::to_range() const {
+    if (col_range_only) {
+        return "$" + col_idx_to_letters(first_col) + ":$" + col_idx_to_letters(last_col);
+    }
     return CellAddress{first_row, first_col}.to_a1()
          + ":" +
            CellAddress{last_row, last_col}.to_a1();

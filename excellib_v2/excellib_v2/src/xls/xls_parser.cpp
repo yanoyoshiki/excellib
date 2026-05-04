@@ -187,6 +187,17 @@ std::vector<Cell> XlsSheet::cells() const {
 void XlsSheet::for_each_cell(std::function<void(const Cell&)> fn) const {
     for(auto&[r,cols]:data_) for(auto&[c,x]:cols) fn(x);
 }
+std::vector<Cell> XlsSheet::read_until_blank(const CellAddress& start, Direction dir) const {
+    std::vector<Cell> result;
+    uint32_t r = start.row, c = start.col;
+    while (true) {
+        Cell cv = cell(r, c);
+        if (cv.is_blank()) break;
+        result.push_back(cv);
+        if (dir == Direction::Down) ++r; else ++c;
+    }
+    return result;
+}
 void XlsSheet::set_cell(uint32_t r,uint32_t c,const CellValue& v){Cell x;x.address={r,c};x.value=v;fill_type(x);put_cell(x);}
 void XlsSheet::set_cell(const std::string& a,const CellValue& v){auto addr=CellAddress::from_a1(a);set_cell(addr.row,addr.col,v);}
 void XlsSheet::set_formula(const std::string& a,const std::string& f){

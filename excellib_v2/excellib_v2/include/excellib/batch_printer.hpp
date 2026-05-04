@@ -10,6 +10,7 @@
 #include <vector>
 #include <functional>
 #include <optional>
+#include <atomic>
 
 namespace excellib {
 
@@ -34,8 +35,10 @@ struct JobResult {
     std::string file_path;
     std::string sheet_name;
     bool        success{false};
+    bool        cancelled{false};
     std::string error_message;
     double      elapsed_ms{0.0};
+    PrintJob    original_job;   ///< for retry via BatchPrinter::from_failures
 };
 
 struct BatchResult {
@@ -43,10 +46,12 @@ struct BatchResult {
     size_t      total{0};
     size_t      succeeded{0};
     size_t      failed{0};
+    size_t      cancelled_count{0};
+    bool        cancelled{false};   ///< true if batch was stopped by request_cancel()
     double      total_elapsed_ms{0.0};
     std::string output_path;
 
-    bool all_success() const { return failed == 0; }
+    bool all_success() const { return failed == 0 && !cancelled; }
     std::vector<const JobResult*> failures() const {
         std::vector<const JobResult*> v;
         for (auto& j : jobs) if (!j.success) v.push_back(&j);
@@ -65,6 +70,8 @@ class BatchPrinter {
 public:
     BatchPrinter();
     ~BatchPrinter();
+    BatchPrinter(BatchPrinter&&) noexcept;
+    BatchPrinter& operator=(BatchPrinter&&) noexcept;
 
     BatchPrinter& add(const PrintJob& job);
     BatchPrinter& add(const std::string& file,
@@ -105,9 +112,18 @@ public:
 
     void set_progress_callback(BatchProgressCallback cb) { cb_ = cb; }
 
+    /// Thread-safe cancel: causes the next job not yet submitted to Excel to be skipped.
+    void request_cancel()          noexcept { cancel_requested_.store(true,  std::memory_order_relaxed); }
+    bool is_cancel_requested() const noexcept { return cancel_requested_.load(std::memory_order_relaxed); }
+    void reset_cancel()            noexcept { cancel_requested_.store(false, std::memory_order_relaxed); }
+
+    /// Build a new BatchPrinter containing only the failed/cancelled jobs from a previous result.
+    static BatchPrinter from_failures(const BatchResult& result);
+
 private:
-    std::vector<PrintJob> jobs_;
-    BatchProgressCallback cb_;
+    std::vector<PrintJob>     jobs_;
+    BatchProgressCallback     cb_;
+    std::atomic<bool>         cancel_requested_{false};
 
     void log(size_t done, const PrintJob& job, const std::string& msg);
 

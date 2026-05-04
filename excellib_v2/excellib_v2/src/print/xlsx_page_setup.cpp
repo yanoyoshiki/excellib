@@ -376,29 +376,33 @@ static void inject_defined_names(
 
     // 印刷範囲
     if (ps.print_area) {
-        std::string ref = "'" + sheet_name + "'!" +
-            "$" + CellAddress{ps.print_area->first_row,
-                              ps.print_area->first_col}.to_a1() +
-            ":$" + CellAddress{ps.print_area->last_row,
-                               ps.print_area->last_col}.to_a1();
-        // A1 -> $A$1 変換
-        // (簡易: to_a1 は "A1" を返すので $ を挿入)
-        auto make_absolute = [](const std::string& a1) -> std::string {
-            std::string r;
-            size_t i=0;
-            while (i<a1.size() && std::isalpha((unsigned char)a1[i]))
-                { r += '$'; r += a1[i++]; }
-            r += '$';
-            while (i<a1.size()) r += a1[i++];
-            return r;
+        auto col_letters = [](uint32_t col) {
+            std::string r; uint32_t c = col + 1;
+            while (c > 0) { --c; r += static_cast<char>('A' + c % 26); c /= 26; }
+            std::reverse(r.begin(), r.end()); return r;
         };
-        std::string abs_start = make_absolute(
-            CellAddress{ps.print_area->first_row, ps.print_area->first_col}.to_a1());
-        std::string abs_end = make_absolute(
-            CellAddress{ps.print_area->last_row, ps.print_area->last_col}.to_a1());
-        dn << "<definedName name=\"_xlnm.Print_Area\">"
-           << "'" << sheet_name << "'!" << abs_start << ":" << abs_end
-           << "</definedName>";
+        if (ps.print_area->is_columns_only()) {
+            dn << "<definedName name=\"_xlnm.Print_Area\">"
+               << "'" << sheet_name << "'!$" << col_letters(ps.print_area->first_col)
+               << ":$" << col_letters(ps.print_area->last_col)
+               << "</definedName>";
+        } else {
+            auto make_absolute = [](const std::string& a1) -> std::string {
+                std::string r; size_t i = 0;
+                while (i < a1.size() && std::isalpha((unsigned char)a1[i]))
+                    { r += '$'; r += a1[i++]; }
+                r += '$';
+                while (i < a1.size()) r += a1[i++];
+                return r;
+            };
+            std::string abs_start = make_absolute(
+                CellAddress{ps.print_area->first_row, ps.print_area->first_col}.to_a1());
+            std::string abs_end = make_absolute(
+                CellAddress{ps.print_area->last_row, ps.print_area->last_col}.to_a1());
+            dn << "<definedName name=\"_xlnm.Print_Area\">"
+               << "'" << sheet_name << "'!" << abs_start << ":" << abs_end
+               << "</definedName>";
+        }
     }
 
     // 繰り返し行・列タイトル

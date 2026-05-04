@@ -137,6 +137,9 @@ struct ParseWarning {
 
 using WarningCallback = std::function<void(const ParseWarning&)>;
 
+/// Direction for read_until_blank.
+enum class Direction { Down, Right };
+
 // ============================================================
 //  Sheet interface
 // ============================================================
@@ -167,6 +170,13 @@ public:
     virtual std::vector<Cell> cells() const = 0;
 
     virtual void for_each_cell(std::function<void(const Cell&)> fn) const = 0;
+
+    /// Returns non-blank cells from start (inclusive) until the first blank.
+    /// Direction::Down scans downward; Direction::Right scans rightward.
+    virtual std::vector<Cell> read_until_blank(const CellAddress& start, Direction dir) const = 0;
+    std::vector<Cell> read_until_blank(const std::string& a1, Direction dir) const {
+        return read_until_blank(CellAddress::from_a1(a1), dir);
+    }
 
     // ---- Write ----
     virtual void set_cell   (uint32_t row, uint32_t col, const CellValue& v) = 0;

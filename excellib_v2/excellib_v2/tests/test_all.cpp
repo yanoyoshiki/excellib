@@ -618,9 +618,10 @@ void test_batch_printer() {
     RUN("BatchResult failure tracking", {
         BatchResult r;
         r.total = 3;
-        r.jobs.push_back({0, "a.xlsx", "", true,  ""});
-        r.jobs.push_back({1, "b.xlsx", "", false, "File not found"});
-        r.jobs.push_back({2, "c.xlsx", "", true,  ""});
+        JobResult jr0; jr0.job_index=0; jr0.file_path="a.xlsx"; jr0.success=true;
+        JobResult jr1; jr1.job_index=1; jr1.file_path="b.xlsx"; jr1.success=false; jr1.error_message="File not found";
+        JobResult jr2; jr2.job_index=2; jr2.file_path="c.xlsx"; jr2.success=true;
+        r.jobs = {jr0, jr1, jr2};
         r.succeeded = 2; r.failed = 1;
         EXPECT(!r.all_success());
         auto fails = r.failures();
@@ -972,6 +973,254 @@ void test_japanese() {
 }
 
 // ============================================================
+//  PrintArea::columns_only テスト
+// ============================================================
+void test_columns_only_print_area() {
+    group("PrintArea::columns_only");
+
+    RUN("columns_only string A:D", {
+        auto pa = PrintArea::columns_only("A:D");
+        EXPECT(pa.is_columns_only());
+        EXPECT_EQ(pa.first_col, uint32_t(0));
+        EXPECT_EQ(pa.last_col,  uint32_t(3));
+    });
+
+    RUN("columns_only string single column B", {
+        auto pa = PrintArea::columns_only("B");
+        EXPECT(pa.is_columns_only());
+        EXPECT_EQ(pa.first_col, uint32_t(1));
+        EXPECT_EQ(pa.last_col,  uint32_t(1));
+    });
+
+    RUN("columns_only index (0-based)", {
+        auto pa = PrintArea::columns_only(uint32_t(0), uint32_t(5));
+        EXPECT(pa.is_columns_only());
+        EXPECT_EQ(pa.first_col, uint32_t(0));
+        EXPECT_EQ(pa.last_col,  uint32_t(5));
+    });
+
+    RUN("columns_only reverses if col_start > col_end", {
+        auto pa = PrintArea::columns_only(uint32_t(5), uint32_t(0));
+        EXPECT_EQ(pa.first_col, uint32_t(0));
+        EXPECT_EQ(pa.last_col,  uint32_t(5));
+    });
+
+    RUN("columns_only to_range returns $A:$D", {
+        auto pa = PrintArea::columns_only("A:D");
+        EXPECT_EQ(pa.to_range(), std::string{"$A:$D"});
+    });
+
+    RUN("columns_only to_range $Z:$Z", {
+        auto pa = PrintArea::columns_only(uint32_t(25), uint32_t(25));
+        EXPECT_EQ(pa.to_range(), std::string{"$Z:$Z"});
+    });
+
+    RUN("from_range is NOT columns_only", {
+        auto pa = PrintArea::from_range("A1:D10");
+        EXPECT(!pa.is_columns_only());
+    });
+
+    RUN("columns_only is_valid", {
+        auto pa = PrintArea::columns_only("A:D");
+        EXPECT(pa.is_valid());
+    });
+
+    RUN("columns_only PageSetup integration", {
+        PageSetup ps;
+        ps.print_area = PrintArea::columns_only("A:H");
+        EXPECT(ps.print_area->is_columns_only());
+        EXPECT_EQ(ps.print_area->to_range(), std::string{"$A:$H"});
+    });
+}
+
+// ============================================================
+//  Sheet::read_until_blank テスト
+// ============================================================
+void test_read_until_blank() {
+    group("Sheet::read_until_blank");
+
+    RUN("read down from A1 returns values until blank", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", int64_t{1});
+        sh.set_cell("A2", int64_t{2});
+        sh.set_cell("A3", int64_t{3});
+        // A4 is blank
+        sh.set_cell("A5", int64_t{99});  // should not be included
+
+        auto cells = sh.read_until_blank("A1", Direction::Down);
+        EXPECT_EQ(cells.size(), size_t(3));
+        EXPECT_EQ(get_int(cells[0].value), int64_t{1});
+        EXPECT_EQ(get_int(cells[1].value), int64_t{2});
+        EXPECT_EQ(get_int(cells[2].value), int64_t{3});
+    });
+
+    RUN("read right from A1 returns values until blank", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", std::string{"a"});
+        sh.set_cell("B1", std::string{"b"});
+        sh.set_cell("C1", std::string{"c"});
+        // D1 is blank
+        sh.set_cell("E1", std::string{"skip"});
+
+        auto cells = sh.read_until_blank("A1", Direction::Right);
+        EXPECT_EQ(cells.size(), size_t(3));
+        EXPECT_EQ(get_string(cells[0].value), std::string{"a"});
+        EXPECT_EQ(get_string(cells[2].value), std::string{"c"});
+    });
+
+    RUN("read from blank start returns empty vector", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        auto cells = sh.read_until_blank("A1", Direction::Down);
+        EXPECT(cells.empty());
+    });
+
+    RUN("read single value (next is blank)", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("B2", double{3.14});
+        auto cells = sh.read_until_blank("B2", Direction::Down);
+        EXPECT_EQ(cells.size(), size_t(1));
+        EXPECT_EQ(get_double(cells[0].value), double{3.14});
+    });
+
+    RUN("read_until_blank A1 string overload", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("C3", std::string{"x"});
+        sh.set_cell("C4", std::string{"y"});
+        auto cells = sh.read_until_blank(CellAddress::from_a1("C3"), Direction::Down);
+        EXPECT_EQ(cells.size(), size_t(2));
+    });
+
+    RUN("read_until_blank roundtrip through XLSX", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", int64_t{10});
+        sh.set_cell("A2", int64_t{20});
+        sh.set_cell("A3", int64_t{30});
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        auto wb2 = WorkbookFactory::open(bytes, {});
+        auto cells = wb2->sheet(0).read_until_blank("A1", Direction::Down);
+        EXPECT_EQ(cells.size(), size_t(3));
+        EXPECT_EQ(get_int(cells[2].value), int64_t{30});
+    });
+}
+
+// ============================================================
+//  BatchPrinter キャンセルテスト
+// ============================================================
+void test_batch_cancellation() {
+    group("BatchPrinter cancellation");
+
+    RUN("cancel before batch marks all as cancelled", {
+        auto wb = WorkbookFactory::create();
+        auto& sh = wb->add_sheet("S");
+        sh.set_cell("A1", int64_t{1});
+        auto bytes = wb->to_bytes(FileFormat::XLSX, {});
+        std::ofstream(tmp("cancel_test.xlsx"), std::ios::binary).write(
+            reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size()));
+
+        BatchPrinter bp;
+        bp.add(tmp("cancel_test.xlsx"), "S");
+        bp.add(tmp("cancel_test.xlsx"), "S");
+        bp.request_cancel();
+        EXPECT(bp.is_cancel_requested());
+
+        // to_pdf_merged: checks at start
+        auto r = bp.to_pdf_merged(tmp("merged_cancel.pdf"));
+        EXPECT(r.cancelled);
+        EXPECT_EQ(r.cancelled_count, size_t(2));
+        EXPECT_EQ(r.succeeded, size_t(0));
+    });
+
+    RUN("reset_cancel clears the flag", {
+        BatchPrinter bp;
+        bp.request_cancel();
+        EXPECT(bp.is_cancel_requested());
+        bp.reset_cancel();
+        EXPECT(!bp.is_cancel_requested());
+    });
+
+    RUN("cancel_requested_ starts as false", {
+        BatchPrinter bp;
+        EXPECT(!bp.is_cancel_requested());
+    });
+
+    RUN("request_cancel is idempotent", {
+        BatchPrinter bp;
+        bp.request_cancel();
+        bp.request_cancel();
+        EXPECT(bp.is_cancel_requested());
+        bp.reset_cancel();
+        EXPECT(!bp.is_cancel_requested());
+    });
+}
+
+// ============================================================
+//  BatchPrinter::from_failures テスト
+// ============================================================
+void test_batch_retry() {
+    group("BatchPrinter::from_failures");
+
+    RUN("from_failures returns printer with only failed jobs", {
+        // Build a fake BatchResult with mix of success and failure
+        BatchResult r;
+        r.total = 3;
+
+        PrintJob job1; job1.file_path = "a.xlsx"; job1.sheet_name = "S1";
+        PrintJob job2; job2.file_path = "b.xlsx"; job2.sheet_name = "S2";
+        PrintJob job3; job3.file_path = "c.xlsx"; job3.sheet_name = "S3";
+
+        JobResult jr1; jr1.job_index=0; jr1.file_path="a.xlsx"; jr1.sheet_name="S1";
+                       jr1.success=true;  jr1.original_job=job1;
+        JobResult jr2; jr2.job_index=1; jr2.file_path="b.xlsx"; jr2.sheet_name="S2";
+                       jr2.success=false; jr2.error_message="error"; jr2.original_job=job2;
+        JobResult jr3; jr3.job_index=2; jr3.file_path="c.xlsx"; jr3.sheet_name="S3";
+                       jr3.success=false; jr3.cancelled=true; jr3.original_job=job3;
+
+        r.jobs = {jr1, jr2, jr3};
+        r.succeeded = 1; r.failed = 1; r.cancelled_count = 1;
+
+        auto retry = BatchPrinter::from_failures(r);
+        EXPECT_EQ(retry.job_count(), size_t(2));
+    });
+
+    RUN("from_failures on all-success returns empty printer", {
+        BatchResult r;
+        r.total = 2;
+
+        PrintJob job1; job1.file_path = "a.xlsx";
+        PrintJob job2; job2.file_path = "b.xlsx";
+
+        JobResult jr1; jr1.success=true; jr1.original_job=job1;
+        JobResult jr2; jr2.success=true; jr2.original_job=job2;
+        r.jobs = {jr1, jr2};
+        r.succeeded = 2;
+
+        auto retry = BatchPrinter::from_failures(r);
+        EXPECT_EQ(retry.job_count(), size_t(0));
+    });
+
+    RUN("from_failures preserves PageSetup from original job", {
+        BatchResult r;
+        PrintJob job1;
+        job1.file_path = "a.xlsx";
+        PageSetup ps; ps.paper_size = PaperSize::A3;
+        job1.setup = ps;
+
+        JobResult jr1; jr1.success=false; jr1.original_job=job1;
+        r.jobs = {jr1}; r.failed = 1;
+
+        auto retry = BatchPrinter::from_failures(r);
+        EXPECT_EQ(retry.job_count(), size_t(1));
+    });
+}
+
+// ============================================================
 //  Main
 // ============================================================
 int main() {
@@ -995,6 +1244,10 @@ int main() {
     test_deflate();
     test_new_features();
     test_japanese();
+    test_columns_only_print_area();
+    test_read_until_blank();
+    test_batch_cancellation();
+    test_batch_retry();
 
     std::cout<<"\n==========================================\n";
     std::cout<<"  Results: "<<g_pass<<" passed  "<<g_fail<<" failed  "<<g_skip<<" skipped\n";

@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## [3.1.0] - 2026-05-03
+
+### Added
+- `PrintArea::columns_only(string_view)` — "A:D" 形式で列範囲のみの印刷エリアを作成
+- `PrintArea::columns_only(uint32_t, uint32_t)` — 0-based インデックスで列範囲を指定
+- `PrintArea::is_columns_only()` — 列のみ印刷エリアかどうかを判定
+- `PrintArea::to_range()` が `col_range_only=true` の場合 `"$A:$D"` 形式を返すよう更新
+- `Sheet::read_until_blank(start, Direction)` — 空白セルが出るまでセルを取得
+- `Direction` 列挙型 — `Direction::Down` / `Direction::Right`
+- `BatchPrinter::request_cancel()` — バッチ実行中のキャンセル要求（スレッドセーフ）
+- `BatchPrinter::is_cancel_requested()` — キャンセル要求の確認
+- `BatchPrinter::reset_cancel()` — キャンセルフラグのリセット
+- `BatchPrinter::from_failures(result)` — 失敗/キャンセルジョブのみ再試行する BatchPrinter を生成
+- `BatchResult::cancelled` — バッチがキャンセルされたかどうかのフラグ
+- `BatchResult::cancelled_count` — キャンセルされたジョブ数
+- `JobResult::cancelled` — 個別ジョブがキャンセルされたかどうかのフラグ
+- `JobResult::original_job` — 再試行用に元の PrintJob を保持
+
+---
+
 ## [3.0.0] - 2026-05-03
 
 ### Breaking Changes

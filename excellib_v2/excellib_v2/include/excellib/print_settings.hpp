@@ -38,14 +38,22 @@ enum class FitTo {
 struct PrintArea {
     uint32_t first_row{0}, first_col{0};
     uint32_t last_row{0},  last_col{0};
+    bool col_range_only{false};   ///< true = entire columns (no row bounds), e.g. A:D
 
     /// Parse "A1:Z50" range string.  Normalises reversed coordinates.
     static PrintArea from_range(const std::string& range);
 
-    /// Returns "A1:Z50" style string.
+    /// Columns-only print area: "A:D" or "A" selects entire columns.
+    static PrintArea columns_only(std::string_view col_range);
+    static PrintArea columns_only(uint32_t col_start, uint32_t col_end);
+
+    /// "A1:Z50" or "$A:$D" depending on col_range_only.
     std::string to_range() const;
 
-    bool is_valid() const { return last_row >= first_row && last_col >= first_col; }
+    bool is_columns_only() const noexcept { return col_range_only; }
+    bool is_valid() const {
+        return last_col >= first_col && (col_range_only || last_row >= first_row);
+    }
 };
 
 // ---- Rows/columns to repeat on every page (0-based, inclusive) ----

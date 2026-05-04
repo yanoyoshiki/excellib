@@ -319,6 +319,17 @@ std::vector<Cell> XlsxSheet::cells() const {
 void XlsxSheet::for_each_cell(std::function<void(const Cell&)> fn) const {
     for (auto& [r,cols]:data_) for (auto& [c,cell]:cols) fn(cell);
 }
+std::vector<Cell> XlsxSheet::read_until_blank(const CellAddress& start, Direction dir) const {
+    std::vector<Cell> result;
+    uint32_t r = start.row, c = start.col;
+    while (true) {
+        Cell cv = cell(r, c);
+        if (cv.is_blank()) break;
+        result.push_back(cv);
+        if (dir == Direction::Down) ++r; else ++c;
+    }
+    return result;
+}
 
 static void fill_type(Cell& c) {
     std::visit([&](auto&& v){

@@ -190,6 +190,40 @@ auto bytes = wb->to_bytes(FileFormat::XLSX);
 
 ---
 
+## PrintArea::columns_only（列範囲のみ印刷エリア）
+
+```cpp
+// A列からD列全体を印刷エリアに設定（行は無制限）
+PageSetup ps;
+ps.print_area = PrintArea::columns_only("A:D");
+
+// インデックス指定（0-based）
+ps.print_area = PrintArea::columns_only(uint32_t(0), uint32_t(7));  // A:H
+
+ps.print_area->is_columns_only();     // true
+ps.print_area->to_range();            // "$A:$D"
+
+// 通常の範囲と組み合わせ可能（同一 API）
+ps.print_area = PrintArea::from_range("A1:H50");  // is_columns_only() == false
+```
+
+## Sheet::read_until_blank（空白まで読み取り）
+
+```cpp
+// A1 から下方向に空白が出るまで読む
+auto cells = sh.read_until_blank("A1", Direction::Down);
+// または
+auto cells = sh.read_until_blank(CellAddress::from_a1("A1"), Direction::Down);
+
+// B1 から右方向に
+auto row_cells = sh.read_until_blank("B1", Direction::Right);
+
+// 空白セルから始めると空ベクターが返る
+auto empty = sh.read_until_blank("Z99", Direction::Down);  // empty
+```
+
+---
+
 ## 印刷パターン（Windows + Excel が必要）
 
 ```cpp
@@ -234,6 +268,15 @@ if (!result.all_success()) {
     for (auto* f : result.failures())
         std::cerr << f->file_path << ": " << f->error_message << "\n";
 }
+
+// キャンセル（別スレッドから呼び出し可）
+batch.request_cancel();
+bool cancelled = batch.is_cancel_requested();
+batch.reset_cancel();
+
+// 失敗/キャンセルジョブのみ再試行
+auto retry = BatchPrinter::from_failures(result);
+auto retry_result = retry.to_pdf_individual("/output/");
 ```
 
 ---
@@ -327,13 +370,18 @@ c.has_formula();  // 常に false（XLS 数式文字列は取得不可）
 
 ```bash
 ./build/test_all
-# 期待: 103 passed  0 failed  0 skipped
+# 期待: 141 passed  0 failed  0 skipped
 ```
 
 テスト内訳:
 - CellAddress / CellValue / Sheet API / XLSX roundtrip
 - XLS 内部関数 / 印刷設定 / バッチ印刷
-- **DEFLATE解凍** (stored / fixed huffman / dynamic huffman / CRC32) ← zlib削除後に追加
+- **DEFLATE解凍** (stored / fixed huffman / dynamic huffman / CRC32)
+- **日本語対応** (漢字/仮名/全角文字のラウンドトリップ)
+- **PrintArea::columns_only** (列範囲のみ印刷エリア)
+- **Sheet::read_until_blank** (空白まで読み取り)
+- **BatchPrinter cancellation** (キャンセル API)
+- **BatchPrinter::from_failures** (失敗ジョブ再試行)
 
 ---
 

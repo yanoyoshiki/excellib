@@ -125,6 +125,7 @@ public:
     std::vector<CellRange> merged_ranges() const override;
 
     void for_each_cell(std::function<void(const Cell&)> fn) const override;
+    std::vector<Cell> read_until_blank(const CellAddress& start, Direction dir) const override;
 
     void put_cell(const Cell& c);
     void set_dimensions(uint32_t rows, uint32_t cols);

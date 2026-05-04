@@ -109,6 +109,7 @@ public:
     std::vector<Cell>   col(uint32_t col_idx)              const override;
     std::vector<Cell>   cells()                            const override;
     void for_each_cell(std::function<void(const Cell&)> fn) const override;
+    std::vector<Cell> read_until_blank(const CellAddress& start, Direction dir) const override;
 
     void set_cell   (uint32_t row, uint32_t col, const CellValue& v) override;
     void set_cell   (const std::string& a1,      const CellValue& v) override;

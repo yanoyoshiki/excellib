@@ -53,6 +53,18 @@ std::string BatchPrinter::job_pdf_name(const PrintJob& job, size_t idx) {
 
 BatchPrinter::BatchPrinter()  = default;
 BatchPrinter::~BatchPrinter() = default;
+BatchPrinter::BatchPrinter(BatchPrinter&& o) noexcept
+    : jobs_(std::move(o.jobs_)), cb_(std::move(o.cb_)),
+      cancel_requested_(o.cancel_requested_.load(std::memory_order_relaxed)) {}
+BatchPrinter& BatchPrinter::operator=(BatchPrinter&& o) noexcept {
+    if (this != &o) {
+        jobs_ = std::move(o.jobs_);
+        cb_   = std::move(o.cb_);
+        cancel_requested_.store(o.cancel_requested_.load(std::memory_order_relaxed),
+                                std::memory_order_relaxed);
+    }
+    return *this;
+}
 
 BatchPrinter& BatchPrinter::add(const PrintJob& j) { jobs_.push_back(j); return *this; }
 BatchPrinter& BatchPrinter::add(const std::string& f, const std::string& s,
@@ -68,8 +80,18 @@ void BatchPrinter::log(size_t done, const PrintJob& job, const std::string& msg)
     if (cb_) cb_(done, jobs_.size(), job, msg);
 }
 
+BatchPrinter BatchPrinter::from_failures(const BatchResult& result) {
+    BatchPrinter bp;
+    for (auto& jr : result.jobs) {
+        if (!jr.success) {
+            bp.jobs_.push_back(jr.original_job);
+        }
+    }
+    return bp;
+}
+
 // ============================================================
-//  PageSetup → VBScript（批处理用）
+//  PageSetup → VBScript（バッチ用）
 // ============================================================
 static std::string ps_to_vbs(const std::string& ws, const PageSetup& ps) {
     std::ostringstream o;
@@ -149,12 +171,17 @@ BatchResult BatchPrinter::print_all(const PrinterOptions& opts, BatchProgressCal
         << "Set xl=CreateObject(\"Excel.Application\")\n"
         << "xl.Visible=False\n"
         << "xl.DisplayAlerts=False\n"
-        << "xl.ScreenUpdating=False\n";   // 画面更新オフで高速化
+        << "xl.ScreenUpdating=False\n";
 
     if (!opts.printer_name.empty())
         vbs << "xl.ActivePrinter=\"" << opts.printer_name << "\"\n";
 
+    std::vector<bool> submitted(jobs_.size(), false);
     for (size_t i=0; i<jobs_.size(); ++i) {
+        if (is_cancel_requested()) {
+            r.cancelled = true;
+            break;
+        }
         auto& job=jobs_[i];
         std::string ai=abs_path(job.file_path);
         std::string wsv="ws"+std::to_string(i);
@@ -177,16 +204,23 @@ BatchResult BatchPrinter::print_all(const PrinterOptions& opts, BatchProgressCal
             << ",PrintToFile:=False\n"
             << "wb.Close False\n"
             << "Set " << wsv << "=Nothing:Set wb=Nothing\n";
+        submitted[i] = true;
     }
 
     vbs << "\nxl.Quit\nSet xl=Nothing\n";
 
-    std::string err; bool ok=run_vbs(vbs.str(),err);
+    std::string err; bool ok = run_vbs(vbs.str(), err);
     r.total_elapsed_ms=t.ms();
 
     for (size_t i=0; i<jobs_.size(); ++i) {
-        r.jobs.push_back({i,jobs_[i].file_path,jobs_[i].sheet_name,ok,ok?"":err});
-        ok ? ++r.succeeded : ++r.failed;
+        bool was_cancelled = !submitted[i];
+        bool job_ok = ok && !was_cancelled;
+        std::string job_err = was_cancelled ? "cancelled" : (ok ? "" : err);
+        r.jobs.push_back({i, jobs_[i].file_path, jobs_[i].sheet_name,
+                          job_ok, was_cancelled, job_err, 0.0, jobs_[i]});
+        if (was_cancelled) ++r.cancelled_count;
+        else if (job_ok)   ++r.succeeded;
+        else               ++r.failed;
     }
     return r;
 }
@@ -200,8 +234,18 @@ BatchResult BatchPrinter::to_pdf_merged(const std::string& out_path,
     BatchResult r; r.total=jobs_.size(); r.output_path=out_path;
     if (jobs_.empty()) return r;
     if (out_path.empty()) throw PrintError("output_path required");
-    Timer t;
 
+    if (is_cancel_requested()) {
+        r.cancelled = true;
+        for (size_t i=0; i<jobs_.size(); ++i) {
+            r.jobs.push_back({i,jobs_[i].file_path,jobs_[i].sheet_name,
+                              false,true,"cancelled",0.0,jobs_[i]});
+            ++r.cancelled_count;
+        }
+        return r;
+    }
+
+    Timer t;
     log(0,jobs_[0],"Starting batch PDF (merged): "+std::to_string(jobs_.size())+" jobs");
 
     std::string ao=abs_path(out_path);
@@ -211,7 +255,6 @@ BatchResult BatchPrinter::to_pdf_merged(const std::string& out_path,
         << "xl.Visible=False\n"
         << "xl.DisplayAlerts=False\n"
         << "xl.ScreenUpdating=False\n"
-        // 結合先の空ワークブックを作成
         << "Set tmp_wb=xl.Workbooks.Add\n"
         << "dummy=tmp_wb.Sheets(1).Name\n";
 
@@ -230,13 +273,11 @@ BatchResult BatchPrinter::to_pdf_merged(const std::string& out_path,
 
         if (job.setup) vbs << ps_to_vbs(wsv, *job.setup);
 
-        // tmp_wb の末尾にシートをコピー
         vbs << wsv << ".Copy After:=tmp_wb.Sheets(tmp_wb.Sheets.Count)\n"
             << "wb.Close False\n"
             << "Set " << wsv << "=Nothing:Set wb=Nothing\n";
     }
 
-    // デフォルトの空シートを削除して一括 PDF 出力
     vbs << "\nApplication.DisplayAlerts=False\n"
         << "tmp_wb.Sheets(dummy).Delete\n"
         << "tmp_wb.ExportAsFixedFormat Type:=0,Filename:=\"" << ao << "\","
@@ -247,7 +288,8 @@ BatchResult BatchPrinter::to_pdf_merged(const std::string& out_path,
     std::string err; bool ok=run_vbs(vbs.str(),err);
     r.total_elapsed_ms=t.ms();
     for (size_t i=0; i<jobs_.size(); ++i) {
-        r.jobs.push_back({i,jobs_[i].file_path,jobs_[i].sheet_name,ok,ok?"":err});
+        r.jobs.push_back({i,jobs_[i].file_path,jobs_[i].sheet_name,
+                          ok,false,ok?"":err,0.0,jobs_[i]});
         ok ? ++r.succeeded : ++r.failed;
     }
     return r;
@@ -272,7 +314,12 @@ BatchResult BatchPrinter::to_pdf_individual(const std::string& out_dir,
         << "xl.DisplayAlerts=False\n"
         << "xl.ScreenUpdating=False\n";
 
+    std::vector<bool> submitted(jobs_.size(), false);
     for (size_t i=0; i<jobs_.size(); ++i) {
+        if (is_cancel_requested()) {
+            r.cancelled = true;
+            break;
+        }
         auto& job=jobs_[i];
         std::string ai=abs_path(job.file_path);
         std::string pdf=abs_path(out_dir+"/"+job_pdf_name(job,i));
@@ -293,6 +340,7 @@ BatchResult BatchPrinter::to_pdf_individual(const std::string& out_dir,
             << "Quality:=0,IgnorePrintAreas:=False\n"
             << "wb.Close False\n"
             << "Set " << wsv << "=Nothing:Set wb=Nothing\n";
+        submitted[i] = true;
     }
 
     vbs << "\nxl.Quit\nSet xl=Nothing\n";
@@ -300,8 +348,14 @@ BatchResult BatchPrinter::to_pdf_individual(const std::string& out_dir,
     std::string err; bool ok=run_vbs(vbs.str(),err);
     r.total_elapsed_ms=t.ms();
     for (size_t i=0; i<jobs_.size(); ++i) {
-        r.jobs.push_back({i,jobs_[i].file_path,jobs_[i].sheet_name,ok,ok?"":err});
-        ok ? ++r.succeeded : ++r.failed;
+        bool was_cancelled = !submitted[i];
+        bool job_ok = ok && !was_cancelled;
+        std::string job_err = was_cancelled ? "cancelled" : (ok ? "" : err);
+        r.jobs.push_back({i, jobs_[i].file_path, jobs_[i].sheet_name,
+                          job_ok, was_cancelled, job_err, 0.0, jobs_[i]});
+        if (was_cancelled) ++r.cancelled_count;
+        else if (job_ok)   ++r.succeeded;
+        else               ++r.failed;
     }
     return r;
 }
