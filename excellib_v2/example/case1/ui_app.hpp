@@ -16,6 +16,8 @@
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <optional>
+#include <cstdint>
 
 namespace case1 {
 

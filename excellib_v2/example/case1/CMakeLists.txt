@@ -52,23 +52,73 @@ else()
 endif()
 
 target_link_libraries(case1 PRIVATE excellib)
+target_include_directories(case1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# ============================================================
+#  Windows 固有の定義・ライブラリ・コンパイルオプション
+# ============================================================
 if(WIN32)
-    target_link_libraries(case1 PRIVATE comctl32 gdi32 user32 uxtheme shell32)
+    # Win10 (0x0A00) を最低ターゲットとして API を露出する。
+    # SetProcessDpiAwarenessContext / GetDpiForSystem / EM_SETCUEBANNER 等を使うため。
+    target_compile_definitions(case1 PRIVATE
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+        UNICODE _UNICODE          # 念のため (W API を明示しているが整合性のため)
+        NOMINMAX                  # windows.h の min/max マクロを抑止
+        WIN32_LEAN_AND_MEAN       # 各 .cpp の重複定義防止
+    )
+
+    # 必要な Win32 ライブラリを明示
+    #   ole32     : COM (CoTaskMemFree)
+    #   comctl32  : Common Controls (ListView / Progress / TabControl / EM_SETCUEBANNER)
+    #   comdlg32  : GetSaveFileNameW / OPENFILENAMEW
+    #   shell32   : SHBrowseForFolderW / SHGetPathFromIDListW
+    #   gdi32     : フォント・描画
+    #   user32    : ウィンドウ・メッセージ
+    #   uxtheme   : Visual Styles (manifest 連携)
+    target_link_libraries(case1 PRIVATE
+        comctl32 comdlg32 shell32 ole32 gdi32 user32 uxtheme
+    )
 endif()
 
 # MSVC 警告レベル
 if(MSVC)
     target_compile_options(case1 PRIVATE /W4 /utf-8 /wd4100 /wd4505)
-else()
+endif()
+
+# GCC / Clang 共通
+if(NOT MSVC)
     target_compile_options(case1 PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 
-# MinGW 静的リンク（スタンドアロン exe）
+# ============================================================
+#  MinGW / TDM-GCC 専用設定
+# ============================================================
 if(MINGW)
-    target_link_options(case1 PRIVATE -static -static-libgcc -static-libstdc++ -mwindows)
-endif()
+    # スタンドアロン exe (ランタイム DLL なし) + WIN32 サブシステム
+    target_link_options(case1 PRIVATE
+        -static -static-libgcc -static-libstdc++ -mwindows
+    )
 
-target_include_directories(case1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    # ソースは UTF-8、wide 文字リテラルは UTF-16LE で出力
+    # これがないと L"日本語" が壊れた wchar_t 列になる
+    target_compile_options(case1 PRIVATE
+        -finput-charset=UTF-8
+        -fexec-charset=UTF-8
+        -fwide-exec-charset=UTF-16LE
+    )
+
+    # MinGW で過剰に出る警告を case1 だけ抑制
+    target_compile_options(case1 PRIVATE
+        -Wno-cast-function-type      # GetProcAddress の戻りキャスト
+        -Wno-missing-field-initializers  # Win32 構造体の {} 初期化
+        -Wno-pedantic-ms-format      # printf 拡張系
+    )
+
+    # windres も UTF-8 で読み込む
+    if(CMAKE_RC_COMPILER)
+        set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} -c65001")
+    endif()
+endif()
 
 message(STATUS "case1: GUI app for batch printing via excellib")

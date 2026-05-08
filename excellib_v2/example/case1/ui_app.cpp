@@ -274,12 +274,13 @@ HWND MainWindow::create() {
     wc.lpszClassName = kMainClass;
     RegisterClassW(&wc);
 
-    // GetDpiForSystem は Win10 1607+。古い環境向けにフォールバック
-    typedef UINT (WINAPI* PFN_GDFS)();
+    // GetDpiForSystem は Win10 1607+。古い環境向けにフォールバック。
+    // -Wcast-function-type 回避のため一旦 void(*)() を経由する。
+    typedef UINT (WINAPI* PFN_GDFS)(void);
     if (HMODULE u32 = GetModuleHandleW(L"user32.dll")) {
-        if (auto fn = (PFN_GDFS)GetProcAddress(u32, "GetDpiForSystem")) {
-            dpi_ = (int)fn();
-        }
+        auto fn = reinterpret_cast<PFN_GDFS>(
+            reinterpret_cast<void(*)()>(GetProcAddress(u32, "GetDpiForSystem")));
+        if (fn) dpi_ = (int)fn();
     }
     if (dpi_ <= 0) {
         HDC sdc = GetDC(nullptr);

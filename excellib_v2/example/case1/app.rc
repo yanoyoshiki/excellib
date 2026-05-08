@@ -1,4 +1,6 @@
-#include <windows.h>
-
-// Visual styles + DPI awareness manifest
-1 RT_MANIFEST "app.manifest"
+// app.rc — Visual Styles + DPI awareness manifest
+//
+// 古い windres は RT_MANIFEST マクロを認識しないため、
+// 数値リテラル 24 (= RT_MANIFEST の値) を直書きする。
+// MSVC の rc.exe / MinGW の windres どちらでも動く。
+1 24 "app.manifest"

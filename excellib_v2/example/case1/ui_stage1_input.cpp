@@ -3,8 +3,10 @@
 #include "workflow.hpp"
 #include "config.hpp"
 #include <commctrl.h>
+#include <commdlg.h>     // GetSaveFileNameW / OPENFILENAMEW
+#include <shlobj.h>      // SHBrowseForFolderW / BROWSEINFOW
+#include <objbase.h>     // CoTaskMemFree
 #include <string>
-#include <shlobj.h>
 
 namespace case1 {
 

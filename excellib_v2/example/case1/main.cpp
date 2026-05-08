@@ -1,20 +1,24 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <cstdint>
 #include "ui_app.hpp"
 
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
-    // DPI awareness は manifest で宣言済み。
-    // コード側からも段階的にフォールバック設定 (古い OS 向け)
-#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-    #define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((HANDLE)-4)
-#endif
+    // DPI awareness は manifest 側で宣言済み。
+    // 古い OS / SDK でもビルドできるよう、コード側は GetProcAddress で動的解決し、
+    // 値は HANDLE 互換の数値で扱う (DPI_AWARENESS_CONTEXT 型に依存しない)。
     typedef BOOL (WINAPI *PFN_SPDAC)(HANDLE);
-    typedef BOOL (WINAPI *PFN_SPDA)();
+    typedef BOOL (WINAPI *PFN_SPDA)(void);
     if (HMODULE u32 = GetModuleHandleW(L"user32.dll")) {
-        if (auto fn = (PFN_SPDAC)GetProcAddress(u32, "SetProcessDpiAwarenessContext")) {
-            fn(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        } else if (auto fn2 = (PFN_SPDA)GetProcAddress(u32, "SetProcessDPIAware")) {
+        auto fn  = reinterpret_cast<PFN_SPDAC>(
+            reinterpret_cast<void(*)()>(GetProcAddress(u32, "SetProcessDpiAwarenessContext")));
+        auto fn2 = reinterpret_cast<PFN_SPDA>(
+            reinterpret_cast<void(*)()>(GetProcAddress(u32, "SetProcessDPIAware")));
+        if (fn) {
+            // -4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+            fn(reinterpret_cast<HANDLE>(static_cast<intptr_t>(-4)));
+        } else if (fn2) {
             fn2();
         }
     }
