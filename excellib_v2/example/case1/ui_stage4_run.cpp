@@ -46,11 +46,11 @@ public:
 
         // 結果 ListView
         result_list_ = make_listview();
-        ListView_InsertColumn(result_list_, 0, _col(L"#",       60));
-        ListView_InsertColumn(result_list_, 1, _col(L"状態",    100));
-        ListView_InsertColumn(result_list_, 2, _col(L"ファイル",320));
-        ListView_InsertColumn(result_list_, 3, _col(L"シート",  140));
-        ListView_InsertColumn(result_list_, 4, _col(L"メッセージ", 260));
+        insert_col(result_list_, 0, L"#",       60);
+        insert_col(result_list_, 1, L"状態",    100);
+        insert_col(result_list_, 2, L"ファイル",320);
+        insert_col(result_list_, 3, L"シート",  140);
+        insert_col(result_list_, 4, L"メッセージ", 260);
 
         // 初期状態は結果なし → 結果系コントロールは隠す
         show_result_controls(false);
@@ -185,6 +185,11 @@ private:
         LVCOLUMNW c{}; c.mask = LVCF_TEXT|LVCF_WIDTH;
         c.cx = w; c.pszText = const_cast<wchar_t*>(t);
         return c;
+    }
+
+    static void insert_col(HWND list, int index, const wchar_t* text, int width) {
+        LVCOLUMNW col = _col(text, width);
+        ListView_InsertColumn(list, index, &col);
     }
 
     void show_result_controls(bool show) {

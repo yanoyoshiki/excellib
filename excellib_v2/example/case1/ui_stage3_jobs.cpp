@@ -36,11 +36,11 @@ public:
 
         list_ = make_listview(LVS_EX_CHECKBOXES);
 
-        ListView_InsertColumn(list_, 0, _col(L"#",       60));
-        ListView_InsertColumn(list_, 1, _col(L"ファイル", 320));
-        ListView_InsertColumn(list_, 2, _col(L"シート",   140));
-        ListView_InsertColumn(list_, 3, _col(L"列範囲",   120));
-        ListView_InsertColumn(list_, 4, _col(L"ラベル",   200));
+        insert_col(list_, 0, L"#",       60);
+        insert_col(list_, 1, L"ファイル", 320);
+        insert_col(list_, 2, L"シート",   140);
+        insert_col(list_, 3, L"列範囲",   120);
+        insert_col(list_, 4, L"ラベル",   200);
 
         summary_ = make_label(L"", app_.fonts().bodyBold);
     }
@@ -136,6 +136,11 @@ private:
         LVCOLUMNW c{}; c.mask = LVCF_TEXT|LVCF_WIDTH;
         c.cx = w; c.pszText = const_cast<wchar_t*>(t);
         return c;
+    }
+
+    static void insert_col(HWND list, int index, const wchar_t* text, int width) {
+        LVCOLUMNW col = _col(text, width);
+        ListView_InsertColumn(list, index, &col);
     }
 
     void repopulate() {
